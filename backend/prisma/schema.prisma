@@ -1,0 +1,171 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model AdminUser {
+  id           String   @id @default(cuid())
+  name         String
+  username     String   @unique
+  email        String   @unique
+  passwordHash String
+  role         String   @default("ADMIN")
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model School {
+  id             String            @id @default(cuid())
+  name           String            @unique
+  email          String?           @unique
+  address        String?
+  educationLevel String            @default("SD")
+  targetPupils   Int               @default(0)
+  isActive       Boolean           @default(true)
+  deliveries     Delivery[]
+  claims         Claim[]
+  account        SchoolUser?
+  invitations    SchoolInvitation[]
+  menuRecipients MenuRecipient[]
+}
+
+model Driver {
+  id         String     @id @default(cuid())
+  name       String
+  isActive   Boolean    @default(true)
+  deliveries Delivery[]
+}
+
+model Delivery {
+  id            String   @id @default(cuid())
+  date          DateTime
+  portions      Int
+  departureTime String?
+  status        String   @default("PREPARING")
+  statusNote    String?
+  receivedAt    String?
+  schoolId      String
+  school        School   @relation(fields: [schoolId], references: [id])
+  driverId      String?
+  driver        Driver?  @relation(fields: [driverId], references: [id])
+
+  @@index([date, status])
+  @@unique([date, schoolId])
+}
+
+model Claim {
+  id        String   @id @default(cuid())
+  type      String
+  portions  Int
+  status    String   @default("PENDING")
+  note      String
+  createdAt DateTime @default(now())
+  schoolId  String
+  school    School   @relation(fields: [schoolId], references: [id])
+}
+
+model SystemAlert {
+  id        String   @id @default(cuid())
+  title     String
+  schoolName String
+  message   String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model SchoolUser {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String?
+  isActive     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  schoolId     String   @unique
+  school       School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  invitations  SchoolInvitation[]
+}
+
+model SchoolInvitation {
+  id           String       @id @default(cuid())
+  tokenHash    String       @unique
+  expiresAt    DateTime
+  acceptedAt   DateTime?
+  createdAt    DateTime     @default(now())
+  schoolId     String
+  school       School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  schoolUserId String
+  schoolUser   SchoolUser   @relation(fields: [schoolUserId], references: [id], onDelete: Cascade)
+  emailOutbox  EmailOutbox?
+
+  @@index([expiresAt, acceptedAt])
+}
+
+model EmailOutbox {
+  id               String    @id @default(cuid())
+  recipient        String
+  subject          String
+  encryptedPayload String
+  status           String    @default("PENDING")
+  invitationId     String?   @unique
+  invitation       SchoolInvitation? @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+  attempts         Int       @default(0)
+  nextAttemptAt    DateTime  @default(now())
+  sentAt           DateTime?
+  lastError        String?
+  createdAt        DateTime  @default(now())
+
+  @@index([status, nextAttemptAt])
+}
+
+model NutritionIngredient {
+  id           String           @id @default(cuid())
+  name         String           @unique
+  category     String
+  unit         String           @default("g")
+  calories     Float
+  protein      Float
+  carbohydrates Float
+  fat          Float
+  menus        MenuIngredient[]
+}
+
+model MealMenu {
+  id             String           @id @default(cuid())
+  name           String
+  educationLevel String
+  date           DateTime
+  productionNote String?
+  status         String           @default("SCHEDULED")
+  createdAt      DateTime         @default(now())
+  ingredients    MenuIngredient[]
+  recipients     MenuRecipient[]
+
+  @@index([date, educationLevel])
+}
+
+model MenuIngredient {
+  id           String              @id @default(cuid())
+  menuId       String
+  menu         MealMenu            @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  ingredientId String
+  ingredient   NutritionIngredient @relation(fields: [ingredientId], references: [id])
+  amountGrams  Float
+
+  @@unique([menuId, ingredientId])
+}
+
+model MenuRecipient {
+  id       String   @id @default(cuid())
+  menuId   String
+  menu     MealMenu @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  schoolId String
+  school   School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  portions Int
+
+  @@unique([menuId, schoolId])
+}
