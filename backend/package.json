@@ -3,14 +3,14 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
- "scripts": {
-  "start": "node server.js",
-  "dev": "node server.js",
-  "db:migrate": "prisma migrate dev --name init",
-  "db:seed": "node prisma/seed.js",
-  "db:remove-demo-data": "node prisma/remove-demo-data.js",
-  "db:studio": "prisma studio"
-},
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "db:migrate": "prisma migrate dev --name init",
+    "db:seed": "node prisma/seed.js",
+    "db:remove-demo-data": "node prisma/remove-demo-data.js",
+    "db:studio": "prisma studio"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
@@ -22,7 +22,8 @@
     "dotenv": "^18.0.6",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.2",
-    "nodemailer": "^10.0.15"
+    "nodemailer": "^10.0.15",
+    "react-router-dom": "^7.18.4"
   },
   "devDependencies": {
     "prisma": "6.12.0"
