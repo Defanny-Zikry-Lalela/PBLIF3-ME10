@@ -27,14 +27,22 @@ export async function apiRequest(path, options = {}) {
   if (requestOptions.body) headers.set('Content-Type', 'application/json')
   if (token) headers.set('Authorization', `Bearer ${token}`)
 
-  const response = await fetch(path, { ...requestOptions, headers })
-  let body
-
+  let response
   try {
-    body = await response.json()
-  } catch {
-    throw new Error('Server mengirim respons yang tidak dapat dibaca.')
+    response = await fetch(path, { ...requestOptions, headers })
+  } catch (error) {
+    if (error.name === 'AbortError') throw error
+    if (error instanceof TypeError) {
+      throw new Error('Tidak dapat terhubung ke server. Pastikan backend berjalan di port 5000, lalu coba lagi.')
+    }
+    throw error
   }
+
+  const contentType = response.headers.get('content-type') || ''
+  if (!contentType.toLowerCase().includes('application/json')) {
+    throw new Error(`Server mengirim respons bukan JSON (HTTP ${response.status}). Periksa apakah backend berjalan dan proxy /api mengarah ke port 5000.`)
+  }
+  const body = await response.json()
 
   if (!response.ok) {
     if (response.status === 401 && token) clearToken(tokenType)
