@@ -54,6 +54,20 @@ function createSchoolSession(account) {
   };
 }
 
+async function authenticateSchool(username, password) {
+  const account = await prisma.schoolUser.findUnique({
+    where: { email: username.trim().toLowerCase() },
+    include: { school: { select: { id: true, name: true, educationLevel: true, isActive: true } } },
+  });
+
+  if (!account?.school.isActive || !account.passwordHash || !(await bcrypt.compare(password, account.passwordHash))) {
+    return null;
+  }
+
+  await activateSchoolOnFirstLogin(account);
+  return createSchoolSession(account);
+}
+
 app.post('/api/auth/login', async (req, res, next) => {
   try {
     const { username, password } = req.body || {};
@@ -85,17 +99,12 @@ app.post('/api/auth/login', async (req, res, next) => {
       });
     }
 
-    const schoolAccount = await prisma.schoolUser.findUnique({
-      where: { email: username.trim().toLowerCase() },
-      include: { school: { select: { id: true, name: true, educationLevel: true, isActive: true } } },
-    });
-    if (!schoolAccount?.school.isActive || !schoolAccount.passwordHash
-      || !(await bcrypt.compare(password, schoolAccount.passwordHash))) {
+    const schoolSession = await authenticateSchool(username, password);
+    if (!schoolSession) {
       return res.status(401).json({ message: 'Email/username atau kata sandi tidak sesuai.' });
     }
 
-    await activateSchoolOnFirstLogin(schoolAccount);
-    res.json(createSchoolSession(schoolAccount));
+    res.json(schoolSession);
   } catch (error) {
     next(error);
   }
@@ -108,16 +117,12 @@ app.post('/api/auth/school/login', async (req, res, next) => {
       return res.status(400).json({ message: 'Email sekolah dan kata sandi wajib diisi.' });
     }
 
-    const account = await prisma.schoolUser.findUnique({
-      where: { email: username.trim().toLowerCase() },
-      include: { school: { select: { id: true, name: true, educationLevel: true, isActive: true } } },
-    });
-    if (!account?.school.isActive || !account.passwordHash || !(await bcrypt.compare(password, account.passwordHash))) {
+    const schoolSession = await authenticateSchool(username, password);
+    if (!schoolSession) {
       return res.status(401).json({ message: 'Email atau kata sandi sekolah tidak sesuai.' });
     }
 
-    await activateSchoolOnFirstLogin(account);
-    res.json(createSchoolSession(account));
+    res.json(schoolSession);
   } catch (error) {
     next(error);
   }

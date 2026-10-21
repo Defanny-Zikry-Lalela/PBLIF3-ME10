@@ -995,17 +995,13 @@ a.navigation-link:hover {
 .management-input.ingredient-select,
 .management-input.amount-input {
   min-height: 31px;
-  padding-right: 25px;
+  padding-right: 24px;
   padding-left: 8px;
   font-size: 10px;
 }
 
 .amount-input-wrap {
   position: relative;
-}
-
-.management-input.amount-input {
-  padding-right: 24px;
 }
 
 .amount-input-wrap > span {
