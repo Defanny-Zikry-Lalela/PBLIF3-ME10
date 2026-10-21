@@ -20,13 +20,13 @@ model AdminUser {
 }
 
 model School {
-  id             String            @id @default(cuid())
-  name           String            @unique
-  email          String?           @unique
+  id             String             @id @default(cuid())
+  name           String             @unique
+  email          String?            @unique
   address        String?
-  educationLevel String            @default("SD")
-  targetPupils   Int               @default(0)
-  isActive       Boolean           @default(true)
+  educationLevel String             @default("SD")
+  targetPupils   Int                @default(0)
+  isActive       Boolean            @default(true)
   deliveries     Delivery[]
   claims         Claim[]
   account        SchoolUser?
@@ -35,10 +35,12 @@ model School {
 }
 
 model Driver {
-  id         String     @id @default(cuid())
-  name       String
-  isActive   Boolean    @default(true)
-  deliveries Delivery[]
+  id          String             @id @default(cuid())
+  name        String
+  isActive    Boolean            @default(true)
+  deliveries  Delivery[]
+  account     DriverUser?
+  invitations DriverInvitation[]
 }
 
 model Delivery {
@@ -53,40 +55,48 @@ model Delivery {
   school        School   @relation(fields: [schoolId], references: [id])
   driverId      String?
   driver        Driver?  @relation(fields: [driverId], references: [id])
+  claim         Claim?
 
-  @@index([date, status])
   @@unique([date, schoolId])
+  @@index([date, status])
 }
 
 model Claim {
-  id        String   @id @default(cuid())
-  type      String
-  portions  Int
-  status    String   @default("PENDING")
-  note      String
-  createdAt DateTime @default(now())
-  schoolId  String
-  school    School   @relation(fields: [schoolId], references: [id])
+  id          String    @id @default(cuid())
+  type        String
+  portions    Int
+  status      String    @default("PENDING")
+  note        String
+  evidenceUrl String?
+  adminNote   String?
+  createdAt   DateTime  @default(now())
+  reviewedAt  DateTime?
+  schoolId    String
+  school      School    @relation(fields: [schoolId], references: [id])
+  deliveryId  String?   @unique
+  delivery    Delivery? @relation(fields: [deliveryId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
 }
 
 model SystemAlert {
-  id        String   @id @default(cuid())
-  title     String
+  id         String   @id @default(cuid())
+  title      String
   schoolName String
-  message   String
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
+  message    String
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
 }
 
 model SchoolUser {
-  id           String   @id @default(cuid())
-  email        String   @unique
+  id           String             @id @default(cuid())
+  email        String             @unique
   passwordHash String?
-  isActive     Boolean  @default(false)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  schoolId     String   @unique
-  school       School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  isActive     Boolean            @default(false)
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  schoolId     String             @unique
+  school       School             @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   invitations  SchoolInvitation[]
 }
 
@@ -105,33 +115,62 @@ model SchoolInvitation {
   @@index([expiresAt, acceptedAt])
 }
 
+model DriverUser {
+  id           String             @id @default(cuid())
+  email        String             @unique
+  passwordHash String?
+  isActive     Boolean            @default(false)
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  driverId     String             @unique
+  driver       Driver             @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  invitations  DriverInvitation[]
+}
+
+model DriverInvitation {
+  id           String       @id @default(cuid())
+  tokenHash    String       @unique
+  expiresAt    DateTime
+  acceptedAt   DateTime?
+  createdAt    DateTime     @default(now())
+  driverId     String
+  driver       Driver       @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  driverUserId String
+  driverUser   DriverUser   @relation(fields: [driverUserId], references: [id], onDelete: Cascade)
+  emailOutbox  EmailOutbox?
+
+  @@index([expiresAt, acceptedAt])
+}
+
 model EmailOutbox {
-  id               String    @id @default(cuid())
-  recipient        String
-  subject          String
-  encryptedPayload String
-  status           String    @default("PENDING")
-  invitationId     String?   @unique
-  invitation       SchoolInvitation? @relation(fields: [invitationId], references: [id], onDelete: Cascade)
-  attempts         Int       @default(0)
-  nextAttemptAt    DateTime  @default(now())
-  sentAt           DateTime?
-  lastError        String?
-  createdAt        DateTime  @default(now())
+  id                 String            @id @default(cuid())
+  recipient          String
+  subject            String
+  encryptedPayload   String
+  status             String            @default("PENDING")
+  invitationId       String?           @unique
+  invitation         SchoolInvitation? @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+  driverInvitationId String?           @unique
+  driverInvitation   DriverInvitation? @relation(fields: [driverInvitationId], references: [id], onDelete: Cascade)
+  attempts           Int               @default(0)
+  nextAttemptAt      DateTime          @default(now())
+  sentAt             DateTime?
+  lastError          String?
+  createdAt          DateTime          @default(now())
 
   @@index([status, nextAttemptAt])
 }
 
 model NutritionIngredient {
-  id           String           @id @default(cuid())
-  name         String           @unique
-  category     String
-  unit         String           @default("g")
-  calories     Float
-  protein      Float
+  id            String           @id @default(cuid())
+  name          String           @unique
+  category      String
+  unit          String           @default("g")
+  calories      Float
+  protein       Float
   carbohydrates Float
-  fat          Float
-  menus        MenuIngredient[]
+  fat           Float
+  menus         MenuIngredient[]
 }
 
 model MealMenu {

@@ -46,7 +46,7 @@ function SchoolActivationPage() {
             <span className="activation-success-icon"><Check size={24} /></span>
             <p className="login-overline">Password berhasil dibuat</p>
             <h1>Kata sandi berhasil dibuat</h1>
-            <p>Silakan masuk ke portal sekolah. Status akun akan aktif setelah login berhasil.</p>
+            <p>Kata sandi tersimpan. Status akun akan aktif setelah sekolah berhasil masuk pertama kali.</p>
             <Link to="/school/login" className="activation-back-link">Masuk ke portal sekolah <ArrowRight size={15} /></Link>
           </div>
         ) : (
@@ -54,14 +54,14 @@ function SchoolActivationPage() {
             <span className="activation-icon"><LockKeyhole size={20} /></span>
             <p className="login-overline">Aktivasi akun sekolah</p>
             <h1>Buat kata sandi</h1>
-            <p className="activation-description">Buat kata sandi minimal 12 karakter. Setelah itu, login ke portal sekolah untuk mengaktifkan status akun.</p>
+            <p className="activation-description">Buat kata sandi minimal 12 karakter dari tautan email. Setelah itu, login untuk mengaktifkan status akun sekolah.</p>
             {error && <div className="login-error" role="alert">{error}</div>}
             <form onSubmit={activate}>
               <label className="form-label" htmlFor="school-password">Kata sandi baru</label>
               <span className="activation-input"><LockKeyhole size={16} /><input id="school-password" type="password" autoComplete="new-password" minLength={12} maxLength={128} required value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Minimal 12 karakter" /></span>
               <label className="form-label activation-confirm-label" htmlFor="school-password-confirm">Ulangi kata sandi</label>
               <span className="activation-input"><LockKeyhole size={16} /><input id="school-password-confirm" type="password" autoComplete="new-password" minLength={12} maxLength={128} required value={confirmation} onChange={(event) => setConfirmation(event.target.value)} placeholder="Masukkan kembali kata sandi" /></span>
-              <button className="button-primary activation-submit" type="submit" disabled={saving}>{saving ? 'Menyimpan kata sandi...' : <>Simpan kata sandi <ArrowRight size={16} /></>}</button>
+              <button className="button-primary activation-submit" type="submit" disabled={saving}>{saving ? 'Mengaktifkan undangan...' : <>Simpan kata sandi <ArrowRight size={16} /></>}</button>
             </form>
           </>
         )}

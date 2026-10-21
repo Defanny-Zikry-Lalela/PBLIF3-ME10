@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Bell, ChevronDown, LayoutDashboard, LogOut, Menu, PackageCheck, School, Wheat, X } from 'lucide-react'
+import { Bell, ChevronDown, LayoutDashboard, LogOut, Menu, PackageCheck, School, Truck, Wheat, X } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 
 function AdminLayout({ admin, onLogout, children }) {
@@ -10,6 +10,8 @@ function AdminLayout({ admin, onLogout, children }) {
     { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { path: '/nutrition', label: 'Menu & Gizi', icon: Wheat },
     { path: '/schools', label: 'Sekolah', icon: School },
+    { path: '/drivers', label: 'Kurir', icon: Truck },
+    { path: '/returns', label: 'Retur & Klaim', icon: Bell },
   ]
 
   function go(path) {
@@ -50,9 +52,6 @@ function AdminLayout({ admin, onLogout, children }) {
               <Icon size={15} /> {label}
             </button>
           ))}
-          <span className="navigation-link navigation-disabled" aria-disabled="true" title="Fitur tersedia pada tahap berikutnya">
-            <Bell size={14} /> Retur &amp; Klaim
-          </span>
         </nav>
 
         <div className="topbar-right">

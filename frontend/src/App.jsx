@@ -13,8 +13,13 @@ import NutritionPage from './pages/NutritionPage.jsx'
 import SchoolManagementPage from './pages/SchoolManagementPage.jsx'
 import SchoolActivationPage from './pages/SchoolActivationPage.jsx'
 import SchoolPortal from './pages/SchoolPortal.jsx'
+import CourierPortal from './pages/CourierPortal.jsx'
+import DriverActivationPage from './pages/DriverActivationPage.jsx'
+import CourierManagementPage from './pages/CourierManagementPage.jsx'
+import ReturnsPage from './pages/ReturnsPage.jsx'
 import AdminLayout from './components/AdminLayout.jsx'
 import { apiRequest, clearToken, getToken } from './lib/api.js'
+import useBodyScrollLock from './hooks/useBodyScrollLock.js'
 import './App.css'
 
 function ProtectedRoute({ admin, children }) {
@@ -26,8 +31,10 @@ function ProtectedRoute({ admin, children }) {
 function AppRoutes() {
   const [admin, setAdmin] = useState(null)
   const [schoolUser, setSchoolUser] = useState(null)
+  const [driverUser, setDriverUser] = useState(null)
   const [checkingSession, setCheckingSession] = useState(true)
   const [checkingSchoolSession, setCheckingSchoolSession] = useState(true)
+  const [checkingDriverSession, setCheckingDriverSession] = useState(true)
 
   useEffect(() => {
     let active = true
@@ -73,23 +80,52 @@ function AppRoutes() {
     return () => { active = false }
   }, [])
 
+  useEffect(() => {
+    let active = true
+    if (!getToken('driver')) {
+      setCheckingDriverSession(false)
+      return () => { active = false }
+    }
+
+    apiRequest('/api/auth/driver/me', { tokenType: 'driver' })
+      .then(({ driver }) => {
+        if (active) setDriverUser(driver)
+      })
+      .catch(() => {
+        clearToken('driver')
+        if (active) setDriverUser(null)
+      })
+      .finally(() => {
+        if (active) setCheckingDriverSession(false)
+      })
+
+    return () => { active = false }
+  }, [])
+
   return (
-    checkingSession || checkingSchoolSession
+    checkingSession || checkingSchoolSession || checkingDriverSession
       ? <main className="session-loading"><span className="loading-spinner" />Memeriksa sesi...</main>
       :
     <Routes>
       <Route path="/activate" element={<SchoolActivationPage />} />
+      <Route path="/courier/activate" element={<DriverActivationPage />} />
       <Route path="/school/login" element={<Navigate to={schoolUser ? '/school/dashboard' : '/login'} replace />} />
+      <Route path="/courier/login" element={<Navigate to={driverUser ? '/courier/dashboard' : '/login'} replace />} />
       <Route path="/school/dashboard" element={schoolUser
         ? <SchoolPortal school={schoolUser} onLogout={() => { clearToken('school'); setSchoolUser(null) }} />
         : <Navigate to="/school/login" replace />} />
+      <Route path="/courier/dashboard" element={driverUser
+        ? <CourierPortal driver={driverUser} onLogout={() => { clearToken('driver'); setDriverUser(null) }} />
+        : <Navigate to="/courier/login" replace />} />
       <Route
         path="/login"
         element={admin
           ? <Navigate to="/dashboard" replace />
           : schoolUser
             ? <Navigate to="/school/dashboard" replace />
-            : <Login onAdminLogin={setAdmin} onSchoolLogin={setSchoolUser} />}
+            : driverUser
+              ? <Navigate to="/courier/dashboard" replace />
+              : <Login onAdminLogin={setAdmin} onSchoolLogin={setSchoolUser} onDriverLogin={setDriverUser} />}
       />
       <Route
         path="/dashboard"
@@ -115,7 +151,21 @@ function AppRoutes() {
           </AdminLayout>
         </ProtectedRoute>
       )} />
-      <Route path="*" element={<Navigate to={admin ? '/dashboard' : schoolUser ? '/school/dashboard' : '/login'} replace />} />
+      <Route path="/drivers" element={(
+        <ProtectedRoute admin={admin}>
+          <AdminLayout admin={admin} onLogout={() => { clearToken(); setAdmin(null) }}>
+            <CourierManagementPage />
+          </AdminLayout>
+        </ProtectedRoute>
+      )} />
+      <Route path="/returns" element={(
+        <ProtectedRoute admin={admin}>
+          <AdminLayout admin={admin} onLogout={() => { clearToken(); setAdmin(null) }}>
+            <ReturnsPage />
+          </AdminLayout>
+        </ProtectedRoute>
+      )} />
+      <Route path="*" element={<Navigate to={admin ? '/dashboard' : schoolUser ? '/school/dashboard' : driverUser ? '/courier/dashboard' : '/login'} replace />} />
     </Routes>
   )
 }
@@ -152,12 +202,31 @@ function Dashboard() {
   const [dashboard, setDashboard] = useState(null)
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
-  const [status, setStatus] = useState('all')
+  const [status, setStatus] = useState('')
   const [page, setPage] = useState(1)
   const [refreshKey, setRefreshKey] = useState(0)
   const [selectedDelivery, setSelectedDelivery] = useState(null)
+  const [assignableDrivers, setAssignableDrivers] = useState([])
+  const [selectedDriverId, setSelectedDriverId] = useState('')
+  const [savingAssignment, setSavingAssignment] = useState(false)
+  const [assignmentError, setAssignmentError] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+
+  useBodyScrollLock(Boolean(selectedDelivery))
+
+  useEffect(() => {
+    if (!selectedDelivery) return undefined
+    const controller = new AbortController()
+    setSelectedDriverId(selectedDelivery.driverId || '')
+    setAssignmentError('')
+    apiRequest('/api/admin/drivers', { signal: controller.signal })
+      .then(({ drivers }) => setAssignableDrivers(drivers.filter((driver) => driver.accountStatus === 'ACTIVE')))
+      .catch((requestError) => {
+        if (requestError.name !== 'AbortError') setAssignmentError(requestError.message || 'Daftar kurir gagal dimuat.')
+      })
+    return () => controller.abort()
+  }, [selectedDelivery?.id])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -172,7 +241,7 @@ function Dashboard() {
     const params = new URLSearchParams({
       page: String(page),
       limit: '7',
-      status,
+      status: status || 'all',
     })
     if (search) params.set('search', search)
 
@@ -195,6 +264,29 @@ function Dashboard() {
   function changeStatus(value) {
     setStatus(value)
     setPage(1)
+  }
+
+  async function assignDriver() {
+    setSavingAssignment(true)
+    setAssignmentError('')
+    try {
+      const result = await apiRequest(`/api/admin/deliveries/${selectedDelivery.id}/driver`, {
+        method: 'PATCH',
+        body: JSON.stringify({ driverId: selectedDriverId }),
+      })
+      const driverName = assignableDrivers.find((driver) => driver.id === selectedDriverId)?.name
+      setSelectedDelivery({
+        ...selectedDelivery,
+        driverId: selectedDriverId || null,
+        driver: driverName || 'Belum ditugaskan',
+      })
+      setRefreshKey((key) => key + 1)
+      setAssignmentError(result.message)
+    } catch (requestError) {
+      setAssignmentError(requestError.message || 'Penugasan kurir gagal disimpan.')
+    } finally {
+      setSavingAssignment(false)
+    }
   }
 
   const metrics = dashboard?.metrics
@@ -257,7 +349,8 @@ function Dashboard() {
               </label>
               <label className="filter-field">
                 <span className="sr-only">Filter status pengiriman</span>
-                <select value={status} onChange={(event) => changeStatus(event.target.value)}>
+                <select className="filter-status-select" required value={status} onChange={(event) => changeStatus(event.target.value)}>
+                  <option value="" disabled>Filter status</option>
                   <option value="all">Semua status</option>
                   <option value="PREPARING">Persiapan</option>
                   <option value="IN_TRANSIT">Dalam perjalanan</option>
@@ -369,6 +462,17 @@ function Dashboard() {
               <div><dt>Pembaruan terakhir</dt><dd>{selectedDelivery.statusNote || 'Belum ada pembaruan'}</dd></div>
               {selectedDelivery.receivedAt && <div><dt>Diterima pada</dt><dd>{selectedDelivery.receivedAt}</dd></div>}
             </dl>
+            <div className="delivery-assignment">
+              <label className="form-label" htmlFor="delivery-driver">Tugaskan kurir aktif</label>
+              <select id="delivery-driver" className="management-input" value={selectedDriverId} onChange={(event) => setSelectedDriverId(event.target.value)}>
+                <option value="">Belum ditugaskan</option>
+                {assignableDrivers.map((driver) => <option key={driver.id} value={driver.id}>{driver.name} · {driver.email}</option>)}
+              </select>
+              {assignmentError && <p className="school-form-help" role="status">{assignmentError}</p>}
+              <button className="button-primary modal-close-button" type="button" disabled={savingAssignment} onClick={assignDriver}>
+                {savingAssignment ? 'Menyimpan...' : 'Simpan penugasan'}
+              </button>
+            </div>
             <button className="button-primary modal-close-button" type="button" onClick={() => setSelectedDelivery(null)}>Tutup</button>
           </section>
         </div>

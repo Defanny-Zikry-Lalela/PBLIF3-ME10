@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowRight, Bell, CalendarDays, Check, CircleHelp, Clock3, KeyRound, LockKeyhole, LogOut, PackageCheck, ShieldCheck, Truck, X } from 'lucide-react'
+import { ArrowRight, Bell, CalendarDays, Check, CircleHelp, Clock3, ExternalLink, KeyRound, LockKeyhole, LogOut, PackageCheck, Send, ShieldCheck, Truck, X } from 'lucide-react'
 import { apiRequest } from '../lib/api.js'
+import useBodyScrollLock from '../hooks/useBodyScrollLock.js'
 
 function SchoolPortal({ school, onLogout }) {
   return <SchoolDashboard school={school} onLogout={onLogout} />
@@ -24,6 +25,14 @@ function SchoolDashboard({ school, onLogout }) {
   const [passwordError, setPasswordError] = useState('')
   const [passwordNotice, setPasswordNotice] = useState('')
   const [savingPassword, setSavingPassword] = useState(false)
+  const [eligibleDeliveries, setEligibleDeliveries] = useState([])
+  const [returnRequests, setReturnRequests] = useState([])
+  const [returnForm, setReturnForm] = useState({ deliveryId: '', type: '', portions: '', note: '', evidenceUrl: '' })
+  const [returnError, setReturnError] = useState('')
+  const [returnNotice, setReturnNotice] = useState('')
+  const [savingReturn, setSavingReturn] = useState(false)
+
+  useBodyScrollLock(passwordDialogOpen)
 
   const loadDashboard = useCallback(async () => {
     setError('')
@@ -37,7 +46,20 @@ function SchoolDashboard({ school, onLogout }) {
     }
   }, [])
 
-  useEffect(() => { loadDashboard() }, [loadDashboard])
+  const loadReturns = useCallback(async () => {
+    try {
+      const result = await apiRequest('/api/school/returns', { tokenType: 'school' })
+      setEligibleDeliveries(result.eligibleDeliveries)
+      setReturnRequests(result.returns)
+    } catch (requestError) {
+      setReturnError(requestError.message || 'Data pengajuan retur gagal dimuat.')
+    }
+  }, [])
+
+  useEffect(() => {
+    loadDashboard()
+    loadReturns()
+  }, [loadDashboard, loadReturns])
 
   async function changePassword(event) {
     event.preventDefault()
@@ -66,6 +88,27 @@ function SchoolDashboard({ school, onLogout }) {
     }
   }
 
+  async function submitReturn(event) {
+    event.preventDefault()
+    setReturnError('')
+    setReturnNotice('')
+    setSavingReturn(true)
+    try {
+      const result = await apiRequest('/api/school/returns', {
+        method: 'POST',
+        tokenType: 'school',
+        body: JSON.stringify(returnForm),
+      })
+      setReturnNotice(result.message)
+      setReturnForm({ deliveryId: '', type: '', portions: '', note: '', evidenceUrl: '' })
+      await loadReturns()
+    } catch (requestError) {
+      setReturnError(requestError.message || 'Pengajuan retur gagal dikirim.')
+    } finally {
+      setSavingReturn(false)
+    }
+  }
+
   const delivery = data?.delivery
   const dateLabel = new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date())
   const eta = delivery?.statusNote?.match(/(?:tiba|estimasi)\s+(?:tiba\s+)?(\d{1,2}[.:]\d{2})/i)?.[1]?.replace('.', ':')
@@ -82,7 +125,7 @@ function SchoolDashboard({ school, onLogout }) {
         <nav className="school-portal-nav" aria-label="Navigasi sekolah">
           <span className="school-portal-nav-active">Dashboard</span>
           <span aria-disabled="true" title="Fitur QC dan penerimaan akan hadir berikutnya">QC &amp; Penerimaan</span>
-          <span aria-disabled="true" title="Fitur pengajuan retur akan hadir berikutnya">Pengajuan Retur</span>
+          <a className="school-portal-return-link" href="#school-returns">Pengajuan Retur</a>
         </nav>
         <div className="school-portal-profile">
           <span className="school-user-avatar">{school.name.trim().charAt(0).toUpperCase()}</span>
@@ -139,7 +182,7 @@ function SchoolDashboard({ school, onLogout }) {
                 </dl>
 
                 {data.menu?.ingredients?.length > 0 && <p className="school-menu-ingredients">Menu hari ini: {data.menu.ingredients.join(', ')}</p>}
-                <div className="school-qc-hint"><ShieldCheck size={16} /><div><strong>Siapkan pemeriksaan penerimaan</strong><p>Cocokkan jumlah porsi dan kondisi kemasan saat MBG tiba. Formulir QC dan konfirmasi penerimaan akan tersedia di tahap berikutnya.</p></div></div>
+                <div className="school-qc-hint"><ShieldCheck size={16} /><div><strong>Periksa kondisi saat penerimaan</strong><p>Jika ada porsi atau kondisi makanan yang perlu ditindaklanjuti, ajukan retur melalui formulir di bawah ini.</p></div></div>
               </>
             ) : (
               <div className="school-empty-delivery">
@@ -161,10 +204,52 @@ function SchoolDashboard({ school, onLogout }) {
             ].map(([number, title, description]) => (
               <article className="school-guide-step" key={number}><span>{number}</span><div><strong>{title}</strong><p>{description}</p></div></article>
             ))}
-            <div className="school-guide-notice"><Check size={14} /><p>Pemeriksaan kualitas dilakukan saat MBG diterima. Pengajuan QC dan retur akan ditambahkan setelah tahap ini.</p></div>
+            <div className="school-guide-notice"><Check size={14} /><p>Retur hanya dapat diajukan untuk pengiriman yang sudah selesai diterima.</p></div>
             {data?.updatedAt && <p className="school-data-updated"><Clock3 size={12} /> Data diperbarui {new Intl.DateTimeFormat('id-ID', { hour: '2-digit', minute: '2-digit' }).format(new Date(data.updatedAt))}</p>}
           </aside>
         </div>
+        <section className="panel school-returns-panel" id="school-returns">
+          <div className="panel-heading">
+            <div><h2>Pengajuan retur MBG</h2><p>Ajukan retur porsi dari pengiriman selesai untuk ditinjau admin SPPG.</p></div>
+          </div>
+          {returnNotice && <div className="inline-notice success-notice" role="status"><Check size={16} />{returnNotice}</div>}
+          {returnError && <div className="inline-notice error-notice" role="alert"><Bell size={16} />{returnError}</div>}
+          <form className="school-return-form" onSubmit={submitReturn}>
+            <label className="form-label" htmlFor="return-delivery">Pengiriman selesai</label>
+            <select className="management-input" id="return-delivery" required value={returnForm.deliveryId} onChange={(event) => {
+              const selected = eligibleDeliveries.find((item) => item.id === event.target.value)
+              setReturnForm({ ...returnForm, deliveryId: event.target.value, portions: selected ? String(selected.portions) : '' })
+            }}>
+              <option value="" disabled>Pilih pengiriman</option>
+              {eligibleDeliveries.map((item) => <option key={item.id} value={item.id}>{new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium' }).format(new Date(item.date))} · {item.portions.toLocaleString('id-ID')} porsi</option>)}
+            </select>
+            <label className="form-label" htmlFor="return-type">Kategori retur</label>
+            <select className="management-input" id="return-type" required value={returnForm.type} onChange={(event) => setReturnForm({ ...returnForm, type: event.target.value })}>
+              <option value="" disabled>Pilih kategori retur</option>
+              {['Kualitas makanan', 'Kemasan rusak', 'Jumlah tidak sesuai', 'Keterlambatan', 'Lainnya'].map((type) => <option key={type} value={type}>{type}</option>)}
+            </select>
+            <label className="form-label" htmlFor="return-portions">Jumlah porsi diretur</label>
+            <input className="management-input" id="return-portions" type="number" min="1" max={eligibleDeliveries.find((item) => item.id === returnForm.deliveryId)?.portions || 100000} required value={returnForm.portions} onChange={(event) => setReturnForm({ ...returnForm, portions: event.target.value })} />
+            <label className="form-label" htmlFor="return-note">Keterangan</label>
+            <textarea className="management-input school-address-input" id="return-note" rows="3" minLength="10" maxLength="1000" required placeholder="Jelaskan kondisi retur dan tindak lanjut yang dibutuhkan" value={returnForm.note} onChange={(event) => setReturnForm({ ...returnForm, note: event.target.value })} />
+            <label className="form-label" htmlFor="return-evidence">Tautan bukti <span className="optional-label">Opsional</span></label>
+            <input className="management-input" id="return-evidence" type="url" maxLength="1000" placeholder="https://..." value={returnForm.evidenceUrl} onChange={(event) => setReturnForm({ ...returnForm, evidenceUrl: event.target.value })} />
+            <button className="button-primary" type="submit" disabled={savingReturn || !eligibleDeliveries.length}>
+              {savingReturn ? 'Mengirim pengajuan...' : <><Send size={15} /> Kirim pengajuan retur</>}
+            </button>
+          </form>
+          {!eligibleDeliveries.length && <p className="school-return-empty">Belum ada pengiriman selesai yang dapat diajukan untuk retur.</p>}
+          <div className="school-return-history">
+            <h3>Riwayat pengajuan</h3>
+            {returnRequests.length ? returnRequests.map((item) => (
+              <article className="school-return-row" key={item.id}>
+                <div><strong>{item.type} · {item.portions.toLocaleString('id-ID')} porsi</strong><span>{item.delivery?.date ? new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium' }).format(new Date(item.delivery.date)) : 'Pengiriman'}</span><p>{item.note}</p>{item.adminNote && <small>Catatan admin: {item.adminNote}</small>}</div>
+                <span className={`return-status return-status-${item.status.toLowerCase()}`}>{item.status === 'PENDING' ? 'Menunggu tinjauan' : item.status === 'APPROVED' ? 'Disetujui' : 'Ditolak'}</span>
+                {item.evidenceUrl && <a href={item.evidenceUrl} target="_blank" rel="noreferrer">Buka bukti <ExternalLink size={12} /></a>}
+              </article>
+            )) : <p className="school-return-empty">Belum ada pengajuan retur.</p>}
+          </div>
+        </section>
         <footer className="school-portal-footer">NutriTrack MBG <span>·</span> Program Makanan Bergizi Gratis</footer>
       </main>
       {passwordDialogOpen && (

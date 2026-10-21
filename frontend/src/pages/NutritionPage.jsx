@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { AlertTriangle, ArrowRight, CalendarDays, Check, ChevronDown, Clock3, Plus, Save, School, Trash2, Utensils, Wheat, X } from 'lucide-react'
 import { apiRequest } from '../lib/api.js'
+import useBodyScrollLock from '../hooks/useBodyScrollLock.js'
 
 const LEVELS = ['SD', 'SMP', 'SMA', 'SMK', 'SLB']
 const NUTRIENT_FIELDS = [
@@ -26,7 +27,7 @@ function NutritionPage() {
   const [menus, setMenus] = useState([])
   const [form, setForm] = useState({
     name: '',
-    educationLevel: 'SD',
+    educationLevel: '',
     date: localDateValue(),
     productionNote: '',
   })
@@ -38,6 +39,8 @@ function NutritionPage() {
   const [notice, setNotice] = useState('')
   const [ingredientFormOpen, setIngredientFormOpen] = useState(false)
   const [savingIngredient, setSavingIngredient] = useState(false)
+  useBodyScrollLock(ingredientFormOpen)
+
   const [ingredientForm, setIngredientForm] = useState({
     name: '',
     category: '',
@@ -93,9 +96,7 @@ function NutritionPage() {
   }
 
   function addIngredient() {
-    const ingredient = ingredients.find((item) => !rows.some((row) => row.ingredientId === item.id))
-      || ingredients[0]
-    if (ingredient) setRows([...rows, { ingredientId: ingredient.id, amountGrams: '10' }])
+    if (ingredients.length > rows.length) setRows([...rows, { ingredientId: '', amountGrams: '10' }])
   }
 
   function updateIngredient(index, key, value) {
@@ -122,7 +123,7 @@ function NutritionPage() {
       })
       setNotice(result.message)
       setSchoolIds([])
-      setForm((current) => ({ ...current, name: '', productionNote: '' }))
+      setForm((current) => ({ ...current, name: '', educationLevel: '', productionNote: '' }))
       await loadPageData()
     } catch (requestError) {
       setError(requestError.message || 'Menu MBG gagal dijadwalkan.')
@@ -148,7 +149,7 @@ function NutritionPage() {
         }),
       })
       setIngredients((current) => [...current, result.ingredient].sort((a, b) => a.name.localeCompare(b.name, 'id')))
-      setRows((current) => [...current, { ingredientId: result.ingredient.id, amountGrams: '50' }])
+      setRows((current) => [...current, { ingredientId: '', amountGrams: '50' }])
       setIngredientForm({ name: '', category: '', calories: '', protein: '', carbohydrates: '', fat: '' })
       setIngredientFormOpen(false)
       setNotice(result.message)
@@ -188,7 +189,7 @@ function NutritionPage() {
 
                 <div className="nutrition-top-fields">
                   <div><label className="form-label" htmlFor="menu-level">Jenjang sekolah penerima</label>
-                    <span className="select-input-wrap"><select className="management-input" id="menu-level" value={form.educationLevel} onChange={(event) => changeLevel(event.target.value)}>{LEVELS.map((level) => <option key={level} value={level}>{level}</option>)}</select><ChevronDown size={14} /></span>
+                    <span className="select-input-wrap"><select className={`management-input management-select${form.educationLevel ? '' : ' select-placeholder'}`} id="menu-level" required value={form.educationLevel} onChange={(event) => changeLevel(event.target.value)}><option value="" disabled>Pilih jenjang sekolah</option>{LEVELS.map((level) => <option key={level} value={level}>{level}</option>)}</select><ChevronDown size={14} /></span>
                   </div>
                   <div><label className="form-label" htmlFor="menu-date">Tanggal distribusi</label><input className="management-input" id="menu-date" type="date" required value={form.date} onChange={(event) => setForm({ ...form, date: event.target.value })} /></div>
                 </div>
@@ -198,7 +199,9 @@ function NutritionPage() {
                     <span><School size={15} /> Sekolah penerima <strong>{schoolIds.length}</strong></span>
                     {eligibleSchools.length > 0 && <button type="button" onClick={() => setSchoolIds(schoolIds.length === eligibleSchools.length ? [] : eligibleSchools.map((school) => school.id))}>{schoolIds.length === eligibleSchools.length ? 'Hapus pilihan' : 'Pilih semua'}</button>}
                   </div>
-                  {!eligibleSchools.length ? (
+                  {!form.educationLevel ? (
+                    <div className="no-eligible-schools">Pilih jenjang sekolah terlebih dahulu untuk melihat penerima yang sesuai.</div>
+                  ) : !eligibleSchools.length ? (
                     <div className="no-eligible-schools">Belum ada sekolah aktif jenjang {form.educationLevel}. <Link to="/schools">Tambah sekolah <ArrowRight size={12} /></Link></div>
                   ) : (
                     <div className="school-checkbox-list">
@@ -230,7 +233,7 @@ function NutritionPage() {
                         <div className="ingredient-card" key={`${row.ingredientId}-${index}`}>
                           <span className="ingredient-card-icon"><Wheat size={16} /></span>
                           <label className="sr-only" htmlFor={`ingredient-${index}`}>Bahan makanan ke-{index + 1}</label>
-                          <span className="select-input-wrap ingredient-select-wrap"><select className="management-input ingredient-select" id={`ingredient-${index}`} required value={row.ingredientId} onChange={(event) => updateIngredient(index, 'ingredientId', event.target.value)}>{ingredients.map((ingredient) => <option key={ingredient.id} value={ingredient.id}>{ingredient.name}</option>)}</select><ChevronDown size={13} /></span>
+                          <span className="select-input-wrap ingredient-select-wrap"><select className={`management-input management-select ingredient-select${row.ingredientId ? '' : ' select-placeholder'}`} id={`ingredient-${index}`} required value={row.ingredientId} onChange={(event) => updateIngredient(index, 'ingredientId', event.target.value)}><option value="" disabled>Pilih bahan makanan</option>{ingredients.filter((ingredient) => ingredient.id === row.ingredientId || !rows.some((item) => item.ingredientId === ingredient.id)).map((ingredient) => <option key={ingredient.id} value={ingredient.id}>{ingredient.name}</option>)}</select><ChevronDown size={13} /></span>
                           <label className="sr-only" htmlFor={`amount-${index}`}>Jumlah bahan dalam gram</label>
                           <span className="amount-input-wrap"><input className="management-input amount-input" id={`amount-${index}`} type="number" min="0.1" step="0.1" max="10000" required value={row.amountGrams} onChange={(event) => updateIngredient(index, 'amountGrams', event.target.value)} /><span>g</span></span>
                           <span className="ingredient-category">{selected?.category}</span>

@@ -1,20 +1,27 @@
 const ADMIN_TOKEN_KEY = 'nutritrack_admin_token'
 const SCHOOL_TOKEN_KEY = 'nutritrack_school_token'
+const DRIVER_TOKEN_KEY = 'nutritrack_driver_token'
 
 export function getToken(type = 'admin') {
-  const tokenKey = type === 'school' ? SCHOOL_TOKEN_KEY : ADMIN_TOKEN_KEY
+  const tokenKey = type === 'school'
+    ? SCHOOL_TOKEN_KEY
+    : type === 'driver' ? DRIVER_TOKEN_KEY : ADMIN_TOKEN_KEY
   return localStorage.getItem(tokenKey) || sessionStorage.getItem(tokenKey)
 }
 
 export function setToken(token, rememberMe, type = 'admin') {
   clearToken(type)
-  const tokenKey = type === 'school' ? SCHOOL_TOKEN_KEY : ADMIN_TOKEN_KEY
+  const tokenKey = type === 'school'
+    ? SCHOOL_TOKEN_KEY
+    : type === 'driver' ? DRIVER_TOKEN_KEY : ADMIN_TOKEN_KEY
   const storage = rememberMe ? localStorage : sessionStorage
   storage.setItem(tokenKey, token)
 }
 
 export function clearToken(type = 'admin') {
-  const tokenKey = type === 'school' ? SCHOOL_TOKEN_KEY : ADMIN_TOKEN_KEY
+  const tokenKey = type === 'school'
+    ? SCHOOL_TOKEN_KEY
+    : type === 'driver' ? DRIVER_TOKEN_KEY : ADMIN_TOKEN_KEY
   localStorage.removeItem(tokenKey)
   sessionStorage.removeItem(tokenKey)
 }

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { ArrowRight, Building2, Check, CircleAlert, LoaderCircle, Mail, Pencil, Plus, RefreshCw, School, Send, Trash2, UserRoundPlus, Users, X } from 'lucide-react'
+import { ArrowRight, Building2, Check, ChevronDown, CircleAlert, LoaderCircle, Mail, Pencil, Plus, RefreshCw, School, Send, Trash2, UserRoundPlus, Users, X } from 'lucide-react'
 import { apiRequest } from '../lib/api.js'
+import useBodyScrollLock from '../hooks/useBodyScrollLock.js'
 
 const LEVELS = [
   { value: 'SD', label: 'Sekolah Dasar (SD)' },
@@ -25,10 +26,12 @@ function SchoolManagementPage() {
   const [testingEmail, setTestingEmail] = useState(false)
   const [formOpen, setFormOpen] = useState(() => new URLSearchParams(location.search).get('newSchool') === '1')
   const [editingSchool, setEditingSchool] = useState(null)
+  useBodyScrollLock(formOpen)
+
   const [form, setForm] = useState({
     name: '',
     email: '',
-    educationLevel: 'SD',
+    educationLevel: '',
     targetPupils: '',
     address: '',
   })
@@ -72,7 +75,7 @@ function SchoolManagementPage() {
       })
       setNotice(result.message)
       setEditingSchool(null)
-      setForm({ name: '', email: '', educationLevel: 'SD', targetPupils: '', address: '' })
+      setForm({ name: '', email: '', educationLevel: '', targetPupils: '', address: '' })
       setFormOpen(false)
       await loadSchools()
     } catch (requestError) {
@@ -84,7 +87,7 @@ function SchoolManagementPage() {
 
   function openNewSchool() {
     setEditingSchool(null)
-    setForm({ name: '', email: '', educationLevel: 'SD', targetPupils: '', address: '' })
+    setForm({ name: '', email: '', educationLevel: '', targetPupils: '', address: '' })
     setFormOpen(true)
   }
 
@@ -167,13 +170,13 @@ function SchoolManagementPage() {
       <div className={`email-setup-banner${emailConfigured ? ' email-setup-ready' : ''}`}>
         <span className="email-setup-icon"><Mail size={18} /></span>
         <div>
-          <strong>{emailConfigured ? 'Pengiriman kredensial Gmail siap diuji.' : 'Kredensial akun sekolah dikirim melalui email.'}</strong>
+          <strong>{emailConfigured ? 'Undangan aktivasi sekolah siap dikirim.' : 'Undangan sekolah menunggu konfigurasi SMTP.'}</strong>
           <p>{emailConfigured
-            ? 'Uji koneksi Gmail. Setelah terverifikasi, email kredensial sekolah yang menunggu akan dikirim.'
-            : 'SMTP Gmail belum aktif. Isi App Password di backend/.env dan mulai ulang backend. Jangan bagikan App Password melalui chat.'}</p>
+            ? 'Tautan aktivasi aman akan dikirim ke email sekolah agar petugas membuat kata sandinya sendiri.'
+            : 'SMTP belum aktif. Isi pengaturan SMTP di backend/.env dan mulai ulang backend. Jangan bagikan kata sandi SMTP melalui chat.'}</p>
         </div>
         <button className="email-test-button" type="button" onClick={testEmailConnection} disabled={testingEmail}>
-          {testingEmail ? <><LoaderCircle size={14} className="refresh-spinning" /> Menguji...</> : <><Send size={14} /> {emailConfigured ? 'Uji & kirim kredensial' : 'Periksa SMTP'}</>}
+          {testingEmail ? <><LoaderCircle size={14} className="refresh-spinning" /> Menguji...</> : <><Send size={14} /> {emailConfigured ? 'Uji & kirim undangan' : 'Uji koneksi SMTP'}</>}
         </button>
       </div>
 
@@ -217,10 +220,10 @@ function SchoolManagementPage() {
                 <span />
                 {school.accountStatus === 'ACTIVE' ? 'Sekolah sudah mengaktifkan akun' : school.accountStatus === 'PENDING' ? (
                   school.invitationEmailStatus === 'SENT'
-                    ? 'Email terkirim · menunggu login'
+                      ? 'Undangan terkirim · menunggu aktivasi'
                     : school.invitationEmailStatus === 'FAILED'
                       ? 'Pengiriman gagal · kirim ulang'
-                      : 'Menunggu email kredensial'
+                        : 'Menunggu undangan aktivasi'
                 ) : 'Belum ada akun'}
               </span>
               {school.accountStatus === 'PENDING' && (
@@ -230,7 +233,7 @@ function SchoolManagementPage() {
                   disabled={sendingId === school.id}
                   onClick={() => resendInvitation(school)}
                 >
-                  <Send size={14} /> {sendingId === school.id ? 'Menyiapkan...' : 'Kirim ulang kredensial'}
+                  <Send size={14} /> {sendingId === school.id ? 'Menyiapkan...' : 'Kirim ulang undangan'}
                 </button>
               )}
               {school.accountStatus === 'ACTIVE' && <span className="account-verified"><Check size={15} /> Login pertama berhasil</span>}
@@ -258,7 +261,7 @@ function SchoolManagementPage() {
               <div><p className="eyebrow">Penerima program MBG</p><h2 id="new-school-title">{editingSchool ? 'Edit sekolah' : 'Tambah sekolah'}</h2></div>
               <button className="icon-button" type="button" aria-label="Tutup formulir" onClick={() => { setFormOpen(false); setEditingSchool(null) }}><X size={19} /></button>
             </div>
-            <p className="school-modal-description">{editingSchool ? editingSchool.email !== form.email && editingSchool.accountStatus === 'ACTIVE' ? 'Mengubah email akan menonaktifkan akun sampai sekolah masuk kembali menggunakan kredensial baru yang dikirim ke email tersebut.' : 'Perbarui identitas sekolah dan target porsi MBG.' : 'Kredensial login akan dikirim ke email sekolah. Password awal sama dengan nama sekolah; sekolah dapat menggantinya setelah login.'}</p>
+            <p className="school-modal-description">{editingSchool ? editingSchool.email !== form.email && editingSchool.accountStatus === 'ACTIVE' ? 'Mengubah email akan menonaktifkan akun dan mengirim tautan aktivasi baru ke email tersebut.' : 'Perbarui identitas sekolah dan target porsi MBG.' : 'Tautan aktivasi akan dikirim ke email sekolah. Petugas membuat kata sandi sendiri melalui tautan yang berlaku selama 24 jam.'}</p>
             <form className="school-form" onSubmit={handleSubmit}>
               <label className="form-label" htmlFor="school-name">Nama sekolah</label>
               <input className="management-input" id="school-name" required maxLength={160} placeholder="Contoh: SDN 01 Batam Center" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
@@ -269,9 +272,10 @@ function SchoolManagementPage() {
 
               <div className="school-form-grid">
                 <div><label className="form-label" htmlFor="school-level">Jenjang pendidikan</label>
-                  <select className="management-input" id="school-level" value={form.educationLevel} onChange={(event) => setForm({ ...form, educationLevel: event.target.value })}>
+                  <span className="select-input-wrap"><select className={`management-input management-select${form.educationLevel ? '' : ' select-placeholder'}`} id="school-level" required value={form.educationLevel} onChange={(event) => setForm({ ...form, educationLevel: event.target.value })}>
+                    <option value="" disabled>Pilih jenjang pendidikan</option>
                     {LEVELS.map((level) => <option key={level.value} value={level.value}>{level.label}</option>)}
-                  </select>
+                  </select><ChevronDown size={14} /></span>
                 </div>
                 <div><label className="form-label" htmlFor="school-target">Target porsi / hari</label>
                   <input className="management-input" id="school-target" type="number" min="1" max="100000" required placeholder="Contoh: 250" value={form.targetPupils} onChange={(event) => setForm({ ...form, targetPupils: event.target.value })} />

@@ -2,8 +2,11 @@ import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { ArrowRight, Eye, EyeOff, LockKeyhole, Mail, PackageCheck } from 'lucide-react'
 import { apiRequest, setToken } from '../lib/api.js'
+import useBodyScrollLock from '../hooks/useBodyScrollLock.js'
 
-function Login({ onAdminLogin, onSchoolLogin }) {
+function Login({ onAdminLogin, onSchoolLogin, onDriverLogin }) {
+  useBodyScrollLock(true)
+
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [rememberMe, setRememberMe] = useState(false)
@@ -27,6 +30,10 @@ function Login({ onAdminLogin, onSchoolLogin }) {
         setToken(result.token, rememberMe, 'school')
         onSchoolLogin(result.school)
         navigate('/school/dashboard', { replace: true })
+      } else if (result.actor === 'DRIVER') {
+        setToken(result.token, rememberMe, 'driver')
+        onDriverLogin(result.driver)
+        navigate('/courier/dashboard', { replace: true })
       } else {
         setToken(result.token, rememberMe, 'admin')
         onAdminLogin(result.admin)
@@ -131,7 +138,7 @@ function Login({ onAdminLogin, onSchoolLogin }) {
             </button>
 
             <div className="login-help">
-              <p>Sistem mengenali akun admin atau sekolah secara otomatis. Password awal sekolah sama dengan nama sekolah.</p>
+              <p>Sistem mengenali akun admin, sekolah, atau kurir secara otomatis.</p>
             </div>
           </form>
           <p className="login-copyright">© {new Date().getFullYear()} NutriTrack MBG <span>·</span> Program Makanan Bergizi Gratis</p>

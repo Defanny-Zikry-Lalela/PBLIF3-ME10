@@ -68,6 +68,28 @@ async function authenticateSchool(username, password) {
   return createSchoolSession(account);
 }
 
+function createDriverSession(account) {
+  return {
+    token: jwt.sign({ sub: account.id, role: 'DRIVER' }, JWT_SECRET, { expiresIn: '8h' }),
+    actor: 'DRIVER',
+    driver: {
+      id: account.driver.id,
+      name: account.driver.name,
+      email: account.email,
+    },
+  };
+}
+
+async function authenticateDriver(username, password) {
+  const account = await prisma.driverUser.findUnique({
+    where: { email: username.trim().toLowerCase() },
+    include: { driver: true },
+  });
+  if (!account?.isActive || !account.driver.isActive || !account.passwordHash
+    || !(await bcrypt.compare(password, account.passwordHash))) return null;
+  return createDriverSession(account);
+}
+
 app.post('/api/auth/login', async (req, res, next) => {
   try {
     const { username, password } = req.body || {};
@@ -100,11 +122,11 @@ app.post('/api/auth/login', async (req, res, next) => {
     }
 
     const schoolSession = await authenticateSchool(username, password);
-    if (!schoolSession) {
-      return res.status(401).json({ message: 'Email/username atau kata sandi tidak sesuai.' });
-    }
+    if (schoolSession) return res.json(schoolSession);
 
-    res.json(schoolSession);
+    const driverSession = await authenticateDriver(username, password);
+    if (!driverSession) return res.status(401).json({ message: 'Email/username atau kata sandi tidak sesuai.' });
+    res.json(driverSession);
   } catch (error) {
     next(error);
   }
@@ -184,6 +206,33 @@ async function requireSchool(req, res, next) {
   }
 }
 
+async function requireDriver(req, res, next) {
+  const authorization = req.get('authorization');
+  const token = authorization?.startsWith('Bearer ') ? authorization.slice(7) : null;
+  if (!token) return res.status(401).json({ message: 'Sesi kurir tidak ditemukan. Silakan masuk kembali.' });
+
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    if (typeof payload === 'string' || payload.role !== 'DRIVER' || typeof payload.sub !== 'string') {
+      return res.status(401).json({ message: 'Sesi kurir tidak valid. Silakan masuk kembali.' });
+    }
+    const account = await prisma.driverUser.findUnique({
+      where: { id: payload.sub },
+      include: { driver: true },
+    });
+    if (!account?.isActive || !account.driver.isActive) {
+      return res.status(401).json({ message: 'Akun kurir tidak aktif. Hubungi administrator SPPG.' });
+    }
+    req.driverAccount = account;
+    next();
+  } catch (error) {
+    if (error instanceof jwt.JsonWebTokenError || error instanceof jwt.TokenExpiredError) {
+      return res.status(401).json({ message: 'Sesi kurir kedaluwarsa. Silakan masuk kembali.' });
+    }
+    next(error);
+  }
+}
+
 app.get('/api/auth/me', requireAdmin, (req, res) => {
   res.json({
     admin: {
@@ -191,6 +240,16 @@ app.get('/api/auth/me', requireAdmin, (req, res) => {
       name: req.admin.name,
       email: req.admin.email,
       role: req.admin.role,
+    },
+  });
+});
+
+app.get('/api/auth/driver/me', requireDriver, (req, res) => {
+  res.json({
+    driver: {
+      id: req.driverAccount.driver.id,
+      name: req.driverAccount.driver.name,
+      email: req.driverAccount.email,
     },
   });
 });
@@ -285,6 +344,86 @@ app.get('/api/school/dashboard', requireSchool, async (req, res, next) => {
   }
 });
 
+app.get('/api/school/returns', requireSchool, async (req, res, next) => {
+  try {
+    const [deliveries, claims] = await Promise.all([
+      prisma.delivery.findMany({
+        where: { schoolId: req.schoolAccount.schoolId, status: 'COMPLETED' },
+        include: { claim: { select: { id: true } } },
+        orderBy: { date: 'desc' },
+        take: 30,
+      }),
+      prisma.claim.findMany({
+        where: { schoolId: req.schoolAccount.schoolId },
+        include: { delivery: { select: { date: true } } },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+    res.json({
+      eligibleDeliveries: deliveries.filter((delivery) => !delivery.claim).map((delivery) => ({
+        id: delivery.id,
+        date: delivery.date,
+        portions: delivery.portions,
+      })),
+      returns: claims,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/school/returns', requireSchool, async (req, res, next) => {
+  try {
+    const { deliveryId, type, portions, note, evidenceUrl } = req.body || {};
+    const returnedPortions = Number(portions);
+    const allowedTypes = ['Kualitas makanan', 'Kemasan rusak', 'Jumlah tidak sesuai', 'Keterlambatan', 'Lainnya'];
+    let normalizedEvidenceUrl = null;
+    if (evidenceUrl != null && evidenceUrl !== '') {
+      try {
+        const parsedUrl = new URL(evidenceUrl);
+        if (!['http:', 'https:'].includes(parsedUrl.protocol)) throw new Error('URL protocol tidak valid');
+        normalizedEvidenceUrl = parsedUrl.toString();
+      } catch {
+        return res.status(400).json({ message: 'Tautan bukti harus berupa alamat web HTTP atau HTTPS yang valid.' });
+      }
+    }
+    if (typeof deliveryId !== 'string' || !deliveryId
+      || !allowedTypes.includes(type)
+      || !Number.isSafeInteger(returnedPortions) || returnedPortions < 1
+      || typeof note !== 'string' || note.trim().length < 10 || note.trim().length > 1000
+      || (evidenceUrl != null && (typeof evidenceUrl !== 'string' || evidenceUrl.length > 1000))) {
+      return res.status(400).json({ message: 'Pengiriman, kategori, jumlah porsi, dan keterangan retur wajib diisi dengan benar.' });
+    }
+    const delivery = await prisma.delivery.findFirst({
+      where: { id: deliveryId, schoolId: req.schoolAccount.schoolId, status: 'COMPLETED' },
+      select: { id: true, portions: true },
+    });
+    if (!delivery) return res.status(404).json({ message: 'Pengiriman selesai tidak ditemukan untuk sekolah ini.' });
+    if (returnedPortions > delivery.portions) {
+      return res.status(400).json({ message: 'Jumlah retur tidak boleh melebihi jumlah porsi pada pengiriman.' });
+    }
+    const existingClaim = await prisma.claim.findUnique({ where: { deliveryId } });
+    if (existingClaim) return res.status(409).json({ message: 'Retur untuk pengiriman ini sudah pernah diajukan.' });
+
+    const claim = await prisma.claim.create({
+      data: {
+        deliveryId,
+        schoolId: req.schoolAccount.schoolId,
+        type,
+        portions: returnedPortions,
+        note: note.trim(),
+        evidenceUrl: normalizedEvidenceUrl,
+      },
+    });
+    res.status(201).json({ claim, message: 'Pengajuan retur berhasil dikirim ke admin SPPG.' });
+  } catch (error) {
+    if (error.code === 'P2002') {
+      return res.status(409).json({ message: 'Retur untuk pengiriman ini sudah pernah diajukan.' });
+    }
+    next(error);
+  }
+});
+
 function encryptEmailPayload(payload) {
   const key = crypto.createHash('sha256').update(JWT_SECRET).digest();
   const iv = crypto.randomBytes(12);
@@ -339,15 +478,16 @@ async function dispatchPendingEmails() {
       where: { status: 'PENDING', attempts: { lt: 5 }, nextAttemptAt: { lte: new Date() } },
       orderBy: { createdAt: 'asc' },
       take: 10,
-      include: { invitation: true },
+      include: { invitation: true, driverInvitation: true },
     });
 
     for (const job of jobs) {
       try {
-        if (!job.invitation || job.invitation.acceptedAt || job.invitation.expiresAt <= new Date()) {
+        const invitation = job.invitation || job.driverInvitation;
+        if (!invitation || invitation.acceptedAt || invitation.expiresAt <= new Date()) {
           await prisma.emailOutbox.update({
             where: { id: job.id },
-            data: { status: 'FAILED', lastError: 'Undangan kedaluwarsa. Buat undangan baru dari halaman sekolah.' },
+            data: { status: 'FAILED', lastError: 'Undangan kedaluwarsa. Buat undangan baru dari halaman pengelolaan akun.' },
           });
           continue;
         }
@@ -372,30 +512,31 @@ async function dispatchPendingEmails() {
             lastError: 'Pengiriman email gagal. Sistem akan mencoba kembali.',
           },
         });
-        console.error(`Email sekolah gagal dikirim (job ${job.id}, percobaan ${attempts}): ${error.code || 'SMTP_ERROR'}`);
+        console.error(`Email undangan gagal dikirim (job ${job.id}, percobaan ${attempts}): ${error.code || 'SMTP_ERROR'}`);
       }
     }
   } catch (error) {
-    console.error('Pemroses antrean email sekolah gagal:', error);
+    console.error('Pemroses antrean email undangan gagal:', error);
   } finally {
     dispatchingEmail = false;
   }
 }
 
-function makeSchoolInviteMessage(schoolName, email) {
-  const loginUrl = new URL('/school/login', process.env.APP_URL || 'http://localhost:5173');
+function makeSchoolInviteMessage(schoolName, email, token) {
+  const activationUrl = new URL('/activate', process.env.APP_URL || 'http://localhost:5173');
+  activationUrl.searchParams.set('token', token);
   const safeSchool = escapeHtml(schoolName);
   const safeEmail = escapeHtml(email);
-  const safeLoginUrl = escapeHtml(loginUrl.toString());
+  const safeActivationUrl = escapeHtml(activationUrl.toString());
   return {
-    text: `Halo admin ${schoolName}, akun sekolah NutriTrack MBG telah disiapkan.\n\nNama sekolah: ${schoolName}\nEmail login: ${email}\nKata sandi awal: ${schoolName}\n\nMasuk melalui ${loginUrl.toString()}. Setelah login, akun akan aktif dan sekolah dapat mengganti kata sandi melalui dashboard. Demi keamanan, segera ganti kata sandi awal.`,
-    html: `<main style="max-width:560px;margin:32px auto;padding:28px;font-family:Arial,sans-serif;color:#29372e;border:1px solid #e6ece7;border-radius:12px"><p style="color:#39734a;font-weight:700">NUTRITRACK MBG</p><h1 style="font-size:22px">Akses portal sekolah</h1><p>Halo admin <strong>${safeSchool}</strong>, akun sekolah Anda sudah disiapkan oleh administrator SPPG.</p><p><strong>Nama sekolah:</strong> ${safeSchool}<br><strong>Email login:</strong> ${safeEmail}<br><strong>Kata sandi awal:</strong> ${safeSchool}</p><p style="margin:28px 0"><a href="${safeLoginUrl}" style="padding:12px 18px;border-radius:8px;color:#fff;background:#245a3e;text-decoration:none;font-weight:700">Masuk ke portal sekolah</a></p><p>Setelah login pertama, akun sekolah akan berstatus aktif. Demi keamanan, segera ganti kata sandi awal dari dashboard sekolah.</p></main>`,
+    text: `Halo admin ${schoolName}, akun sekolah NutriTrack MBG telah disiapkan.\n\nNama sekolah: ${schoolName}\nEmail login: ${email}\n\nBuat kata sandi melalui tautan aktivasi berikut (berlaku 24 jam): ${activationUrl.toString()}\n\nAkun sekolah akan aktif setelah berhasil login pertama kali.`,
+    html: `<main style="max-width:560px;margin:32px auto;padding:28px;font-family:Arial,sans-serif;color:#29372e;border:1px solid #e6ece7;border-radius:12px"><p style="color:#39734a;font-weight:700">NUTRITRACK MBG</p><h1 style="font-size:22px">Aktivasi akun sekolah</h1><p>Halo admin <strong>${safeSchool}</strong>, akun sekolah Anda sudah disiapkan oleh administrator SPPG.</p><p><strong>Email login:</strong> ${safeEmail}</p><p style="margin:28px 0"><a href="${safeActivationUrl}" style="padding:12px 18px;border-radius:8px;color:#fff;background:#245a3e;text-decoration:none;font-weight:700">Buat kata sandi</a></p><p>Tautan berlaku selama 24 jam. Akun sekolah akan aktif setelah berhasil login pertama kali.</p></main>`,
   };
 }
 
 async function enqueueSchoolInvite(transaction, school, account) {
   const token = crypto.randomBytes(32).toString('base64url');
-  const credentialMessage = makeSchoolInviteMessage(school.name, account.email);
+  const credentialMessage = makeSchoolInviteMessage(school.name, account.email, token);
   const invitation = await transaction.schoolInvitation.create({
     data: {
       tokenHash: crypto.createHash('sha256').update(token).digest('hex'),
@@ -407,12 +548,85 @@ async function enqueueSchoolInvite(transaction, school, account) {
   return transaction.emailOutbox.create({
     data: {
       recipient: account.email,
-      subject: 'Kredensial akun sekolah NutriTrack MBG',
+      subject: 'Aktivasi akun sekolah NutriTrack MBG',
       encryptedPayload: encryptEmailPayload(credentialMessage),
       invitationId: invitation.id,
     },
   });
 }
+
+function makeDriverInviteMessage(name, email, token) {
+  const activationUrl = new URL('/courier/activate', process.env.APP_URL || 'http://localhost:5173');
+  activationUrl.searchParams.set('token', token);
+  const safeName = escapeHtml(name);
+  const safeEmail = escapeHtml(email);
+  const safeActivationUrl = escapeHtml(activationUrl.toString());
+  return {
+    text: `Halo ${name}, akun kurir NutriTrack MBG telah disiapkan.\n\nEmail login: ${email}\n\nBuat kata sandi melalui tautan aktivasi berikut (berlaku 24 jam): ${activationUrl.toString()}`,
+    html: `<main style="max-width:560px;margin:32px auto;padding:28px;font-family:Arial,sans-serif;color:#29372e;border:1px solid #e6ece7;border-radius:12px"><p style="color:#39734a;font-weight:700">NUTRITRACK MBG</p><h1 style="font-size:22px">Aktivasi akun kurir</h1><p>Halo <strong>${safeName}</strong>, akun kurir Anda sudah disiapkan.</p><p><strong>Email login:</strong> ${safeEmail}</p><p style="margin:28px 0"><a href="${safeActivationUrl}" style="padding:12px 18px;border-radius:8px;color:#fff;background:#245a3e;text-decoration:none;font-weight:700">Buat kata sandi</a></p><p>Tautan berlaku selama 24 jam. Setelah aktivasi, Anda dapat masuk ke dashboard kurir.</p></main>`,
+  };
+}
+
+async function enqueueDriverInvite(transaction, driver, account) {
+  const token = crypto.randomBytes(32).toString('base64url');
+  const invitation = await transaction.driverInvitation.create({
+    data: {
+      tokenHash: crypto.createHash('sha256').update(token).digest('hex'),
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      driverId: driver.id,
+      driverUserId: account.id,
+    },
+  });
+  return transaction.emailOutbox.create({
+    data: {
+      recipient: account.email,
+      subject: 'Aktivasi akun kurir NutriTrack MBG',
+      encryptedPayload: encryptEmailPayload(makeDriverInviteMessage(driver.name, account.email, token)),
+      driverInvitationId: invitation.id,
+    },
+  });
+}
+
+app.post('/api/auth/driver/activate', async (req, res, next) => {
+  try {
+    const { token, password } = req.body || {};
+    if (typeof token !== 'string' || !token
+      || typeof password !== 'string' || password.length < 12 || password.length > 128) {
+      return res.status(400).json({ message: 'Tautan aktivasi dan kata sandi minimal 12 karakter wajib diisi.' });
+    }
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const invitation = await prisma.driverInvitation.findFirst({
+      where: { tokenHash, acceptedAt: null, expiresAt: { gt: new Date() } },
+    });
+    if (!invitation) {
+      return res.status(400).json({ message: 'Tautan aktivasi sudah tidak berlaku atau sudah pernah digunakan.' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const activated = await prisma.$transaction(async (transaction) => {
+      const result = await transaction.driverInvitation.updateMany({
+        where: { id: invitation.id, acceptedAt: null, expiresAt: { gt: new Date() } },
+        data: { acceptedAt: new Date() },
+      });
+      if (result.count !== 1) return false;
+      await transaction.driverUser.update({
+        where: { id: invitation.driverUserId },
+        data: { passwordHash, isActive: true },
+      });
+      await transaction.emailOutbox.updateMany({
+        where: { driverInvitation: { driverUserId: invitation.driverUserId }, status: 'PENDING' },
+        data: { status: 'FAILED', lastError: 'Undangan sebelumnya sudah digunakan.' },
+      });
+      return true;
+    });
+    if (!activated) {
+      return res.status(400).json({ message: 'Tautan aktivasi sudah tidak berlaku atau sudah pernah digunakan.' });
+    }
+    res.json({ message: 'Akun kurir aktif. Silakan masuk menggunakan email dan kata sandi yang baru dibuat.' });
+  } catch (error) {
+    next(error);
+  }
+});
 
 app.post('/api/auth/school/activate', async (req, res, next) => {
   try {
@@ -510,7 +724,7 @@ app.post('/api/admin/email/test', requireAdmin, async (req, res, next) => {
     await transport.verify();
     emailTransport = transport;
     await dispatchPendingEmails();
-    res.json({ configured: true, verified: true, message: 'Koneksi SMTP berhasil diverifikasi. Undangan sekolah di antrean sedang diproses.' });
+    res.json({ configured: true, verified: true, message: 'Koneksi SMTP berhasil diverifikasi. Semua undangan akun yang menunggu sedang diproses.' });
   } catch (error) {
     console.error('Verifikasi SMTP gagal:', error.code || 'SMTP_ERROR');
     res.status(502).json({
@@ -547,14 +761,14 @@ app.patch('/api/admin/schools/:schoolId', requireAdmin, async (req, res, next) =
       select: { id: true },
     });
     const emailAccount = await prisma.schoolUser.findUnique({ where: { email: normalizedEmail }, select: { id: true } });
-    if (duplicate || (emailAccount && emailAccount.id !== currentSchool.account?.id)) {
+    const driverAccount = await prisma.driverUser.findUnique({ where: { email: normalizedEmail }, select: { id: true } });
+    if (duplicate || driverAccount || (emailAccount && emailAccount.id !== currentSchool.account?.id)) {
       return res.status(409).json({ message: 'Nama sekolah atau email tersebut sudah digunakan sekolah lain.' });
     }
 
     const emailChanged = currentSchool.email !== normalizedEmail;
     const resetCredentials = !currentSchool.account || emailChanged
       || (!currentSchool.account?.isActive && currentSchool.name !== trimmedName);
-    const initialPasswordHash = resetCredentials ? await bcrypt.hash(trimmedName, 12) : null;
     const result = await prisma.$transaction(async (transaction) => {
       await transaction.school.update({
         where: { id: schoolId },
@@ -570,7 +784,7 @@ app.patch('/api/admin/schools/:schoolId', requireAdmin, async (req, res, next) =
       if (currentSchool.account && resetCredentials) {
         await transaction.schoolUser.update({
           where: { id: currentSchool.account.id },
-          data: { email: normalizedEmail, isActive: false, passwordHash: initialPasswordHash },
+          data: { email: normalizedEmail, isActive: false, passwordHash: null },
         });
         await transaction.schoolInvitation.updateMany({
           where: { schoolUserId: currentSchool.account.id, acceptedAt: null },
@@ -583,7 +797,7 @@ app.patch('/api/admin/schools/:schoolId', requireAdmin, async (req, res, next) =
         await enqueueSchoolInvite(transaction, { id: schoolId, name: trimmedName }, { ...currentSchool.account, email: normalizedEmail });
       } else if (!currentSchool.account) {
         const account = await transaction.schoolUser.create({
-          data: { email: normalizedEmail, schoolId, isActive: false, passwordHash: initialPasswordHash },
+          data: { email: normalizedEmail, schoolId, isActive: false, passwordHash: null },
         });
         await enqueueSchoolInvite(transaction, { id: schoolId, name: trimmedName }, account);
       }
@@ -608,7 +822,7 @@ app.patch('/api/admin/schools/:schoolId', requireAdmin, async (req, res, next) =
       },
       emailConfigured: emailIsConfigured(),
       message: resetCredentials && currentSchool.account
-        ? 'Data sekolah diperbarui. Kredensial baru dikirim ke email sekolah; status aktif kembali setelah login.'
+        ? 'Data sekolah diperbarui. Tautan aktivasi baru dikirim ke email; status akun aktif kembali setelah login.'
         : !currentSchool.account
           ? 'Data sekolah dan akun undangan berhasil disiapkan.'
           : 'Data sekolah berhasil diperbarui.',
@@ -657,11 +871,11 @@ app.post('/api/admin/schools', requireAdmin, async (req, res, next) => {
       select: { id: true },
     });
     const existingAccount = await prisma.schoolUser.findUnique({ where: { email: normalizedEmail }, select: { id: true } });
-    if (duplicate || existingAccount) {
+    const existingDriverAccount = await prisma.driverUser.findUnique({ where: { email: normalizedEmail }, select: { id: true } });
+    if (duplicate || existingAccount || existingDriverAccount) {
       return res.status(409).json({ message: 'Nama sekolah atau email tersebut sudah terdaftar.' });
     }
 
-    const initialPasswordHash = await bcrypt.hash(trimmedName, 12);
     const result = await prisma.$transaction(async (transaction) => {
       const school = await transaction.school.create({
         data: {
@@ -676,7 +890,7 @@ app.post('/api/admin/schools', requireAdmin, async (req, res, next) => {
         data: {
           email: normalizedEmail,
           schoolId: school.id,
-          passwordHash: initialPasswordHash,
+          passwordHash: null,
         },
       });
       const invitation = await enqueueSchoolInvite(transaction, school, account);
@@ -697,8 +911,8 @@ app.post('/api/admin/schools', requireAdmin, async (req, res, next) => {
       },
       emailConfigured: emailIsConfigured(),
       message: invitation.status === 'SENT'
-        ? 'Kredensial login sekolah sudah dikirim melalui email.'
-        : 'Akun sekolah sudah disiapkan. Email kredensial belum terkirim dan tersimpan aman di antrean sampai SMTP siap.',
+        ? 'Tautan aktivasi akun sekolah sudah dikirim melalui email.'
+        : 'Akun sekolah sudah disiapkan. Tautan aktivasi tersimpan aman di antrean sampai SMTP siap.',
     });
   } catch (error) {
     if (error.code === 'P2002') {
@@ -724,11 +938,15 @@ app.post('/api/admin/schools/:schoolId/invite', requireAdmin, async (req, res, n
     const outbox = await prisma.$transaction(async (transaction) => {
       await transaction.schoolUser.update({
         where: { id: school.account.id },
-        data: { passwordHash: await bcrypt.hash(school.name, 12), isActive: false },
+        data: { passwordHash: null, isActive: false },
       });
       await transaction.schoolInvitation.updateMany({
         where: { schoolUserId: school.account.id, acceptedAt: null },
         data: { expiresAt: new Date() },
+      });
+      await transaction.emailOutbox.updateMany({
+        where: { invitation: { schoolUserId: school.account.id }, status: 'PENDING' },
+        data: { status: 'FAILED', lastError: 'Undangan lama diganti dengan undangan baru.' },
       });
       return enqueueSchoolInvite(transaction, school, school.account);
     });
@@ -739,9 +957,262 @@ app.post('/api/admin/schools/:schoolId/invite', requireAdmin, async (req, res, n
       emailConfigured: emailIsConfigured(),
       invitationEmailStatus: invitation.status,
       message: invitation.status === 'SENT'
-        ? 'Kredensial login sekolah sudah dikirim ulang.'
-        : 'Kredensial belum terkirim; email aman dalam antrean sampai SMTP siap.',
+        ? 'Tautan aktivasi akun sekolah sudah dikirim ulang.'
+        : 'Tautan aktivasi belum terkirim; email aman dalam antrean sampai SMTP siap.',
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/admin/drivers', requireAdmin, async (req, res, next) => {
+  try {
+    const drivers = await prisma.driver.findMany({
+      orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
+      include: { account: { select: { id: true, email: true, isActive: true } } },
+    });
+    const emailStatuses = await prisma.emailOutbox.findMany({
+      where: { recipient: { in: drivers.map((driver) => driver.account?.email).filter(Boolean) } },
+      select: { recipient: true, status: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    const latestStatus = new Map();
+    for (const item of emailStatuses) {
+      if (!latestStatus.has(item.recipient)) latestStatus.set(item.recipient, item.status);
+    }
+    res.json({
+      emailConfigured: emailIsConfigured(),
+      drivers: drivers.map((driver) => ({
+        id: driver.id,
+        name: driver.name,
+        isActive: driver.isActive,
+        email: driver.account?.email || null,
+        accountStatus: !driver.account ? 'NONE' : driver.account.isActive ? 'ACTIVE' : 'PENDING',
+        invitationEmailStatus: driver.account ? latestStatus.get(driver.account.email) || 'PENDING' : null,
+      })),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/admin/drivers', requireAdmin, async (req, res, next) => {
+  try {
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    if (!name || name.length > 160 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ message: 'Nama kurir dan alamat email yang valid wajib diisi.' });
+    }
+    const existingAccount = await prisma.driverUser.findUnique({ where: { email }, select: { id: true } });
+    const existingSchoolAccount = await prisma.schoolUser.findUnique({ where: { email }, select: { id: true } });
+    const existingSchool = await prisma.school.findFirst({ where: { email }, select: { id: true } });
+    const existingAdmin = await prisma.adminUser.findFirst({
+      where: { email },
+      select: { id: true },
+    });
+    if (existingAccount || existingSchoolAccount || existingSchool || existingAdmin) {
+      return res.status(409).json({ message: 'Email tersebut sudah digunakan oleh akun lain.' });
+    }
+
+    const result = await prisma.$transaction(async (transaction) => {
+      const driver = await transaction.driver.create({ data: { name } });
+      const account = await transaction.driverUser.create({ data: { email, driverId: driver.id } });
+      const invitation = await enqueueDriverInvite(transaction, driver, account);
+      return { driver, invitation };
+    });
+    await dispatchPendingEmails();
+    const invitation = await prisma.emailOutbox.findUnique({
+      where: { id: result.invitation.id },
+      select: { status: true },
+    });
+    res.status(201).json({
+      driver: {
+        id: result.driver.id,
+        name: result.driver.name,
+        email,
+        accountStatus: 'PENDING',
+        invitationEmailStatus: invitation.status,
+      },
+      message: invitation.status === 'SENT'
+        ? 'Undangan aktivasi akun kurir telah dikirim melalui email.'
+        : 'Akun kurir sudah disiapkan. Undangan aktivasi tersimpan di antrean email sampai SMTP siap.',
+    });
+  } catch (error) {
+    if (error.code === 'P2002') {
+      return res.status(409).json({ message: 'Email tersebut sudah digunakan oleh akun lain.' });
+    }
+    next(error);
+  }
+});
+
+app.post('/api/admin/drivers/:driverId/invite', requireAdmin, async (req, res, next) => {
+  try {
+    const driver = await prisma.driver.findUnique({
+      where: { id: req.params.driverId },
+      include: { account: true },
+    });
+    if (!driver?.account) return res.status(404).json({ message: 'Akun kurir tidak ditemukan.' });
+    if (driver.account.isActive) return res.status(409).json({ message: 'Akun kurir ini sudah aktif.' });
+
+    const outbox = await prisma.$transaction(async (transaction) => {
+      await transaction.driverInvitation.updateMany({
+        where: { driverUserId: driver.account.id, acceptedAt: null },
+        data: { expiresAt: new Date() },
+      });
+      await transaction.emailOutbox.updateMany({
+        where: { driverInvitation: { driverUserId: driver.account.id }, status: 'PENDING' },
+        data: { status: 'FAILED', lastError: 'Undangan lama diganti dengan undangan baru.' },
+      });
+      return enqueueDriverInvite(transaction, driver, driver.account);
+    });
+    await dispatchPendingEmails();
+    const invitation = await prisma.emailOutbox.findUnique({
+      where: { id: outbox.id },
+      select: { status: true },
+    });
+    res.json({
+      message: invitation.status === 'SENT'
+        ? 'Undangan aktivasi akun kurir telah dikirim ulang.'
+        : 'Undangan belum terkirim; email tersimpan di antrean sampai SMTP siap.',
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch('/api/admin/deliveries/:deliveryId/driver', requireAdmin, async (req, res, next) => {
+  try {
+    const driverId = typeof req.body?.driverId === 'string' && req.body.driverId ? req.body.driverId : null;
+    if (driverId) {
+      const driver = await prisma.driver.findFirst({
+        where: { id: driverId, isActive: true, account: { is: { isActive: true } } },
+        select: { id: true },
+      });
+      if (!driver) return res.status(404).json({ message: 'Kurir aktif tidak ditemukan.' });
+    }
+    const result = await prisma.delivery.updateMany({
+      where: { id: req.params.deliveryId },
+      data: { driverId },
+    });
+    if (result.count !== 1) return res.status(404).json({ message: 'Pengiriman tidak ditemukan.' });
+    res.json({ message: driverId ? 'Kurir berhasil ditugaskan.' : 'Penugasan kurir berhasil dihapus.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/admin/returns', requireAdmin, async (req, res, next) => {
+  try {
+    const returns = await prisma.claim.findMany({
+      include: {
+        school: { select: { id: true, name: true } },
+        delivery: { select: { id: true, date: true, portions: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json({ returns });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch('/api/admin/returns/:returnId', requireAdmin, async (req, res, next) => {
+  try {
+    const { status, adminNote } = req.body || {};
+    if (!['APPROVED', 'REJECTED'].includes(status)
+      || (adminNote != null && (typeof adminNote !== 'string' || adminNote.trim().length > 1000))
+      || (status === 'REJECTED' && (typeof adminNote !== 'string' || adminNote.trim().length < 5))) {
+      return res.status(400).json({ message: 'Status atau catatan tindak lanjut tidak valid. Penolakan harus disertai alasan minimal 5 karakter.' });
+    }
+    const result = await prisma.claim.updateMany({
+      where: { id: req.params.returnId, status: 'PENDING' },
+      data: {
+        status,
+        adminNote: typeof adminNote === 'string' && adminNote.trim() ? adminNote.trim() : null,
+        reviewedAt: new Date(),
+      },
+    });
+    if (result.count !== 1) {
+      const claim = await prisma.claim.findUnique({ where: { id: req.params.returnId }, select: { id: true } });
+      return res.status(claim ? 409 : 404).json({
+        message: claim ? 'Pengajuan retur ini sudah ditinjau.' : 'Pengajuan retur tidak ditemukan.',
+      });
+    }
+    res.json({ message: status === 'APPROVED' ? 'Pengajuan retur disetujui.' : 'Pengajuan retur ditolak.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/courier/dashboard', requireDriver, async (req, res, next) => {
+  try {
+    const deliveries = await prisma.delivery.findMany({
+      where: { driverId: req.driverAccount.driverId },
+      include: { school: { select: { name: true, address: true } } },
+      orderBy: [{ date: 'desc' }, { departureTime: 'asc' }],
+    });
+    res.json({
+      driver: {
+        id: req.driverAccount.driver.id,
+        name: req.driverAccount.driver.name,
+      },
+      deliveries: deliveries.map((delivery) => ({
+        id: delivery.id,
+        date: delivery.date,
+        portions: delivery.portions,
+        status: delivery.status,
+        statusNote: delivery.statusNote,
+        departureTime: delivery.departureTime,
+        receivedAt: delivery.receivedAt,
+        school: delivery.school.name,
+        address: delivery.school.address,
+      })),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch('/api/courier/deliveries/:deliveryId', requireDriver, async (req, res, next) => {
+  try {
+    const { status, note } = req.body || {};
+    if (!['IN_TRANSIT', 'COMPLETED', 'ALERT'].includes(status)
+      || (note != null && (typeof note !== 'string' || note.trim().length > 500))
+      || (status === 'ALERT' && (!note || note.trim().length < 5))) {
+      return res.status(400).json({ message: 'Status atau catatan pembaruan pengiriman tidak valid.' });
+    }
+    const delivery = await prisma.delivery.findFirst({
+      where: { id: req.params.deliveryId, driverId: req.driverAccount.driverId },
+      select: { id: true, status: true },
+    });
+    if (!delivery) return res.status(404).json({ message: 'Pengiriman yang ditugaskan kepada Anda tidak ditemukan.' });
+    const allowedTransition = (delivery.status === 'PREPARING' && status === 'IN_TRANSIT')
+      || (delivery.status === 'IN_TRANSIT' && ['COMPLETED', 'ALERT'].includes(status))
+      || (delivery.status === 'ALERT' && ['IN_TRANSIT', 'COMPLETED'].includes(status));
+    if (!allowedTransition) {
+      return res.status(409).json({ message: 'Perubahan status ini tidak sesuai dengan tahapan pengiriman saat ini.' });
+    }
+    const now = new Date();
+    const data = {
+      status,
+      statusNote: typeof note === 'string' && note.trim()
+        ? note.trim()
+        : status === 'COMPLETED' ? 'Pengiriman diterima sekolah' : 'Kurir dalam perjalanan',
+      ...(status === 'IN_TRANSIT' && {
+        departureTime: now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' }),
+      }),
+      ...(status === 'COMPLETED' && {
+        receivedAt: now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' }),
+      }),
+    };
+    const result = await prisma.delivery.updateMany({
+      where: { id: delivery.id, driverId: req.driverAccount.driverId, status: delivery.status },
+      data,
+    });
+    if (result.count !== 1) {
+      return res.status(409).json({ message: 'Status pengiriman berubah. Muat ulang daftar sebelum mencoba lagi.' });
+    }
+    res.json({ message: 'Pembaruan status pengiriman berhasil disimpan.' });
   } catch (error) {
     next(error);
   }
@@ -977,7 +1448,7 @@ app.get('/api/admin/dashboard', requireAdmin, async (req, res, next) => {
           where: { date: { gte: today, lt: tomorrow } },
           _sum: { portions: true },
         }),
-        prisma.driver.count({ where: { isActive: true } }),
+        prisma.driver.count({ where: { isActive: true, account: { is: { isActive: true } } } }),
         prisma.school.count({ where: { isActive: true } }),
         prisma.delivery.count({
           where: { date: { gte: today, lt: tomorrow }, status: 'COMPLETED' },
@@ -1023,6 +1494,7 @@ app.get('/api/admin/dashboard', requireAdmin, async (req, res, next) => {
       },
       deliveries: deliveries.map((delivery) => ({
         id: delivery.id,
+        driverId: delivery.driverId,
         school: delivery.school.name,
         driver: delivery.driver?.name || 'Belum ditugaskan',
         portions: delivery.portions,
@@ -1072,7 +1544,7 @@ const server = app.listen(PORT, () => {
     const emailWorker = setInterval(dispatchPendingEmails, 30_000);
     emailWorker.unref();
   } else {
-    console.log('SMTP belum dikonfigurasi; email undangan sekolah akan menunggu di antrean aman.');
+    console.log('SMTP belum dikonfigurasi; email undangan sekolah dan kurir akan menunggu di antrean aman.');
   }
 });
 
