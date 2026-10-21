@@ -5,7 +5,6 @@ import {
   Navigate,
   Route,
   Routes,
-  useLocation,
 } from 'react-router-dom'
 import { Bell, ChevronDown, ChevronLeft, ChevronRight, Clock3, PackageCheck, RefreshCw, School, Truck, X } from 'lucide-react'
 import Login from './pages/login.jsx'
@@ -13,20 +12,15 @@ import NutritionPage from './pages/NutritionPage.jsx'
 import SchoolManagementPage from './pages/SchoolManagementPage.jsx'
 import SchoolActivationPage from './pages/SchoolActivationPage.jsx'
 import SchoolPortal from './pages/SchoolPortal.jsx'
-import CourierPortal from './pages/CourierPortal.jsx'
+import CourierDashboard from './pages/CourierDashboard.jsx'
 import DriverActivationPage from './pages/DriverActivationPage.jsx'
 import CourierManagementPage from './pages/CourierManagementPage.jsx'
 import ReturnsPage from './pages/ReturnsPage.jsx'
 import AdminLayout from './components/AdminLayout.jsx'
+import ProtectedRoute from './components/ProtectedRoute.jsx'
 import { apiRequest, clearToken, getToken } from './lib/api.js'
 import useBodyScrollLock from './hooks/useBodyScrollLock.js'
 import './App.css'
-
-function ProtectedRoute({ admin, children }) {
-  const location = useLocation()
-  if (!admin) return <Navigate to="/login" replace state={{ from: location }} />
-  return children
-}
 
 function AppRoutes() {
   const [admin, setAdmin] = useState(null)
@@ -89,7 +83,7 @@ function AppRoutes() {
 
     apiRequest('/api/auth/driver/me', { tokenType: 'driver' })
       .then(({ driver }) => {
-        if (active) setDriverUser(driver)
+        if (active) setDriverUser({ ...driver, role: 'COURIER' })
       })
       .catch(() => {
         clearToken('driver')
@@ -114,23 +108,46 @@ function AppRoutes() {
       <Route path="/school/dashboard" element={schoolUser
         ? <SchoolPortal school={schoolUser} onLogout={() => { clearToken('school'); setSchoolUser(null) }} />
         : <Navigate to="/school/login" replace />} />
-      <Route path="/courier/dashboard" element={driverUser
-        ? <CourierPortal driver={driverUser} onLogout={() => { clearToken('driver'); setDriverUser(null) }} />
-        : <Navigate to="/courier/login" replace />} />
+      <Route path="/courier/dashboard" element={(
+        <ProtectedRoute user={driverUser || admin}>
+          <CourierDashboard
+            driver={driverUser || admin}
+            onLogout={() => {
+              if (driverUser) {
+                clearToken('driver')
+                setDriverUser(null)
+              } else {
+                clearToken()
+                setAdmin(null)
+              }
+            }}
+          />
+        </ProtectedRoute>
+      )} />
       <Route
         path="/login"
-        element={admin
-          ? <Navigate to="/dashboard" replace />
+        element={admin?.role === 'ADMIN'
+          ? <Navigate to="/admin/dashboard" replace />
           : schoolUser
             ? <Navigate to="/school/dashboard" replace />
-            : driverUser
+            : driverUser?.role === 'COURIER'
               ? <Navigate to="/courier/dashboard" replace />
               : <Login onAdminLogin={setAdmin} onSchoolLogin={setSchoolUser} onDriverLogin={setDriverUser} />}
       />
       <Route
         path="/dashboard"
         element={(
-          <ProtectedRoute admin={admin}>
+          <ProtectedRoute user={admin} requiredRole="ADMIN">
+            <AdminLayout admin={admin} onLogout={() => { clearToken(); setAdmin(null) }}>
+              <Dashboard />
+            </AdminLayout>
+          </ProtectedRoute>
+        )}
+      />
+      <Route
+        path="/admin/dashboard"
+        element={(
+          <ProtectedRoute user={admin} requiredRole="ADMIN">
             <AdminLayout admin={admin} onLogout={() => { clearToken(); setAdmin(null) }}>
               <Dashboard />
             </AdminLayout>
@@ -138,34 +155,34 @@ function AppRoutes() {
         )}
       />
       <Route path="/nutrition" element={(
-        <ProtectedRoute admin={admin}>
+        <ProtectedRoute user={admin} requiredRole="ADMIN">
           <AdminLayout admin={admin} onLogout={() => { clearToken(); setAdmin(null) }}>
             <NutritionPage />
           </AdminLayout>
         </ProtectedRoute>
       )} />
       <Route path="/schools" element={(
-        <ProtectedRoute admin={admin}>
+        <ProtectedRoute user={admin} requiredRole="ADMIN">
           <AdminLayout admin={admin} onLogout={() => { clearToken(); setAdmin(null) }}>
             <SchoolManagementPage />
           </AdminLayout>
         </ProtectedRoute>
       )} />
       <Route path="/drivers" element={(
-        <ProtectedRoute admin={admin}>
+        <ProtectedRoute user={admin} requiredRole="ADMIN">
           <AdminLayout admin={admin} onLogout={() => { clearToken(); setAdmin(null) }}>
             <CourierManagementPage />
           </AdminLayout>
         </ProtectedRoute>
       )} />
       <Route path="/returns" element={(
-        <ProtectedRoute admin={admin}>
+        <ProtectedRoute user={admin} requiredRole="ADMIN">
           <AdminLayout admin={admin} onLogout={() => { clearToken(); setAdmin(null) }}>
             <ReturnsPage />
           </AdminLayout>
         </ProtectedRoute>
       )} />
-      <Route path="*" element={<Navigate to={admin ? '/dashboard' : schoolUser ? '/school/dashboard' : driverUser ? '/courier/dashboard' : '/login'} replace />} />
+      <Route path="*" element={<Navigate to={admin?.role === 'ADMIN' ? '/admin/dashboard' : schoolUser ? '/school/dashboard' : driverUser?.role === 'COURIER' ? '/courier/dashboard' : '/login'} replace />} />
     </Routes>
   )
 }
