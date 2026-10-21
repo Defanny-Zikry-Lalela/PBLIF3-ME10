@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { ArrowRight, Eye, EyeOff, LockKeyhole, Mail, PackageCheck } from 'lucide-react'
 import { apiRequest, setToken } from '../lib/api.js'
 import useBodyScrollLock from '../hooks/useBodyScrollLock.js'
@@ -14,7 +14,6 @@ function Login({ onAdminLogin, onSchoolLogin, onDriverLogin }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const navigate = useNavigate()
-  const location = useLocation()
 
   async function handleSubmit(event) {
     event.preventDefault()
@@ -26,18 +25,23 @@ function Login({ onAdminLogin, onSchoolLogin, onDriverLogin }) {
         method: 'POST',
         body: JSON.stringify({ username, password }),
       })
-      if (result.actor === 'SCHOOL') {
+      const role = result.role
+        || (result.actor === 'DRIVER' ? 'COURIER' : result.actor)
+
+      if (role === 'COURIER') {
+        setToken(result.token, rememberMe, 'driver')
+        onDriverLogin({ ...result.driver, role })
+        navigate('/courier/dashboard', { replace: true })
+      } else if (role === 'ADMIN') {
+        setToken(result.token, rememberMe, 'admin')
+        onAdminLogin(result.admin)
+        navigate('/admin/dashboard', { replace: true })
+      } else if (role === 'SCHOOL') {
         setToken(result.token, rememberMe, 'school')
         onSchoolLogin(result.school)
         navigate('/school/dashboard', { replace: true })
-      } else if (result.actor === 'DRIVER') {
-        setToken(result.token, rememberMe, 'driver')
-        onDriverLogin(result.driver)
-        navigate('/courier/dashboard', { replace: true })
       } else {
-        setToken(result.token, rememberMe, 'admin')
-        onAdminLogin(result.admin)
-        navigate(location.state?.from?.pathname || '/dashboard', { replace: true })
+        throw new Error('Peran akun tidak dikenali. Silakan hubungi administrator.')
       }
     } catch (requestError) {
       setError(requestError.message || 'Tidak dapat terhubung ke server. Silakan coba kembali.')
