@@ -31,7 +31,9 @@ export async function apiRequest(path, options = {}) {
   const token = getToken(tokenType)
   const headers = new Headers(requestOptions.headers)
   headers.set('Accept', 'application/json')
-  if (requestOptions.body) headers.set('Content-Type', 'application/json')
+  if (requestOptions.body && !(typeof FormData !== 'undefined' && requestOptions.body instanceof FormData)) {
+    headers.set('Content-Type', 'application/json')
+  }
   if (token) headers.set('Authorization', `Bearer ${token}`)
 
   let response

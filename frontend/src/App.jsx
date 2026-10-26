@@ -12,6 +12,8 @@ import NutritionPage from './pages/NutritionPage.jsx'
 import SchoolManagementPage from './pages/SchoolManagementPage.jsx'
 import SchoolActivationPage from './pages/SchoolActivationPage.jsx'
 import SchoolPortal from './pages/SchoolPortal.jsx'
+import SchoolQC from './pages/SchoolQC.jsx'
+import SchoolReturn from './pages/SchoolReturn.jsx'
 import CourierDashboard from './pages/CourierDashboard.jsx'
 import DriverActivationPage from './pages/DriverActivationPage.jsx'
 import CourierManagementPage from './pages/CourierManagementPage.jsx'
@@ -107,6 +109,12 @@ function AppRoutes() {
       <Route path="/courier/login" element={<Navigate to={driverUser ? '/courier/dashboard' : '/login'} replace />} />
       <Route path="/school/dashboard" element={schoolUser
         ? <SchoolPortal school={schoolUser} onLogout={() => { clearToken('school'); setSchoolUser(null) }} />
+        : <Navigate to="/school/login" replace />} />
+      <Route path="/school/qc" element={schoolUser
+        ? <SchoolQC school={schoolUser} onLogout={() => { clearToken('school'); setSchoolUser(null) }} />
+        : <Navigate to="/school/login" replace />} />
+      <Route path="/school/returns" element={schoolUser
+        ? <SchoolReturn school={schoolUser} onLogout={() => { clearToken('school'); setSchoolUser(null) }} />
         : <Navigate to="/school/login" replace />} />
       <Route path="/courier/dashboard" element={(
         <ProtectedRoute user={driverUser || admin}>

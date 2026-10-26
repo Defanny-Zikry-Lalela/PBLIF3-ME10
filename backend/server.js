@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('node:crypto');
 const nodemailer = require('nodemailer');
+const multer = require('multer');
 const { PrismaClient } = require('@prisma/client');
 require('dotenv').config();
 
@@ -19,6 +20,11 @@ if (!JWT_SECRET || JWT_SECRET.length < 32) {
 
 app.use(cors({ origin: process.env.FRONTEND_ORIGIN || 'http://localhost:5173' }));
 app.use(express.json({ limit: '10kb' }));
+
+const returnProofUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 5, parts: 6 },
+});
 
 app.get('/', (req, res) => {
   res.json({ message: 'API NutriTrack MBG berjalan.' });
@@ -364,6 +370,7 @@ app.get('/api/school/returns', requireSchool, async (req, res, next) => {
         id: delivery.id,
         date: delivery.date,
         portions: delivery.portions,
+        status: delivery.status,
       })),
       returns: claims,
     });
@@ -372,12 +379,13 @@ app.get('/api/school/returns', requireSchool, async (req, res, next) => {
   }
 });
 
-app.post('/api/school/returns', requireSchool, async (req, res, next) => {
+app.post('/api/school/returns', requireSchool, returnProofUpload.single('proofFile'), async (req, res, next) => {
   try {
     const { deliveryId, type, portions, note, evidenceUrl } = req.body || {};
     const returnedPortions = Number(portions);
     const allowedTypes = ['Kualitas makanan', 'Kemasan rusak', 'Jumlah tidak sesuai', 'Keterlambatan', 'Lainnya'];
     let normalizedEvidenceUrl = null;
+    const proofFile = req.file;
     if (evidenceUrl != null && evidenceUrl !== '') {
       try {
         const parsedUrl = new URL(evidenceUrl);
@@ -386,6 +394,22 @@ app.post('/api/school/returns', requireSchool, async (req, res, next) => {
       } catch {
         return res.status(400).json({ message: 'Tautan bukti harus berupa alamat web HTTP atau HTTPS yang valid.' });
       }
+    }
+    if (proofFile) {
+      const isJpeg = proofFile.mimetype === 'image/jpeg'
+        && proofFile.buffer[0] === 0xff && proofFile.buffer[1] === 0xd8 && proofFile.buffer[2] === 0xff;
+      const isPng = proofFile.mimetype === 'image/png'
+        && proofFile.buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+      const isWebp = proofFile.mimetype === 'image/webp'
+        && proofFile.buffer.toString('ascii', 0, 4) === 'RIFF'
+        && proofFile.buffer.toString('ascii', 8, 12) === 'WEBP';
+      if (!isJpeg && !isPng && !isWebp) {
+        return res.status(400).json({ message: 'Format foto tidak didukung. Unggah file JPG, PNG, atau WEBP.' });
+      }
+      if (normalizedEvidenceUrl) {
+        return res.status(400).json({ message: 'Gunakan tautan bukti atau unggah foto, bukan keduanya.' });
+      }
+      normalizedEvidenceUrl = `data:${proofFile.mimetype};base64,${proofFile.buffer.toString('base64')}`;
     }
     if (typeof deliveryId !== 'string' || !deliveryId
       || !allowedTypes.includes(type)
@@ -1534,6 +1558,13 @@ app.get('/api/admin/dashboard', requireAdmin, async (req, res, next) => {
 app.use((error, req, res, next) => {
   console.error('API error:', error);
   if (res.headersSent) return next(error);
+  if (error instanceof multer.MulterError) {
+    const status = error.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+    const message = error.code === 'LIMIT_FILE_SIZE'
+      ? 'Ukuran foto terlalu besar. Maksimal 2MB.'
+      : 'Foto bukti tidak dapat diproses. Periksa jumlah berkas dan data pengajuan.';
+    return res.status(status).json({ message });
+  }
   res.status(500).json({ message: 'Terjadi kesalahan pada server. Silakan coba kembali.' });
 });
 
