@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react'
 import {
   AlertTriangle,
   ArrowRight,
+  CalendarDays,
   Check,
+  CircleHelp,
   Clock3,
   LogOut,
   MapPin,
@@ -39,6 +41,12 @@ function CourierDashboard({ driver, onLogout }) {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [arrivedIds, setArrivedIds] = useState([])
+  const [currentDate, setCurrentDate] = useState(() => new Date())
+
+  useEffect(() => {
+    const dateTimer = setInterval(() => setCurrentDate(new Date()), 60_000)
+    return () => clearInterval(dateTimer)
+  }, [])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -72,6 +80,17 @@ function CourierDashboard({ driver, onLogout }) {
   const selectedDelivery = deliveries.find((delivery) => delivery.id === selectedId)
   const activeDeliveries = deliveries.filter((delivery) => delivery.status !== 'COMPLETED')
   const totalPortions = activeDeliveries.reduce((total, delivery) => total + delivery.portions, 0)
+  const taskStatus = deliveries.some((delivery) => delivery.status === 'ALERT')
+    ? 'Perlu perhatian'
+    : activeDeliveries.length
+      ? 'Sedang berjalan'
+      : 'Tidak ada tugas'
+  const dateLabel = new Intl.DateTimeFormat('id-ID', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(currentDate)
 
   async function updateDelivery(delivery, status, note) {
     setSaving(true)
@@ -120,15 +139,17 @@ function CourierDashboard({ driver, onLogout }) {
 
   return (
     <div className="courier-dashboard-shell">
-      <header className="school-portal-topbar courier-dashboard-topbar">
-        <a className="school-portal-brand" href="/courier/dashboard">
-          <span><PackageCheck size={19} /></span>
-          <span><strong>NutriTrack <b>MBG</b></strong><small>PORTAL KURIR</small></span>
-        </a>
-        <div className="courier-profile">
-          <span className="school-user-avatar">{driver.name.trim().charAt(0).toUpperCase()}</span>
-          <span><strong>{driver.name}</strong><small>Kurir MBG</small></span>
-          <button type="button" onClick={onLogout}><LogOut size={14} /> Keluar</button>
+      <header className="courier-dashboard-topbar">
+        <div className="courier-dashboard-topbar-inner">
+          <a className="school-portal-brand" href="/courier/dashboard">
+            <span><PackageCheck size={19} /></span>
+            <span><strong>NutriTrack <b>MBG</b></strong><small>PORTAL KURIR</small></span>
+          </a>
+          <div className="courier-profile">
+            <span className="school-user-avatar">{driver.name.trim().charAt(0).toUpperCase()}</span>
+            <span><strong>{driver.name}</strong><small>Kurir MBG</small></span>
+            <button type="button" onClick={onLogout}><LogOut size={14} /><span>Keluar</span></button>
+          </div>
         </div>
       </header>
 
@@ -139,11 +160,29 @@ function CourierDashboard({ driver, onLogout }) {
             <h1>Dashboard kurir</h1>
             <p className="page-description">Kelola rute dan serah terima penugasan MBG Anda.</p>
           </div>
-          <div className="courier-manifest-total">
-            <PackageCheck size={19} />
-            <span><strong>{totalPortions.toLocaleString('id-ID')}</strong><small>porsi dibawa</small></span>
-          </div>
+          <div className="date-badge courier-date-badge"><CalendarDays size={15} />{dateLabel}</div>
         </div>
+
+        <section className="courier-dashboard-metrics" aria-label="Ringkasan tugas kurir">
+          <CourierMetric
+            icon={<PackageCheck size={17} />}
+            label="Porsi dibawa"
+            value={loading ? '…' : totalPortions.toLocaleString('id-ID')}
+            note="Total porsi pengiriman aktif"
+          />
+          <CourierMetric
+            icon={<School size={17} />}
+            label="Sekolah tujuan"
+            value={loading ? '…' : activeDeliveries.length.toLocaleString('id-ID')}
+            note="Pengiriman belum selesai"
+          />
+          <CourierMetric
+            icon={<Route size={17} />}
+            label="Status tugas"
+            value={loading ? '…' : taskStatus}
+            note={`${activeDeliveries.length} pengiriman belum selesai`}
+          />
+        </section>
 
         <nav className="courier-dashboard-tabs" aria-label="Navigasi dashboard kurir">
           {TABS.map((tab) => (
@@ -166,55 +205,67 @@ function CourierDashboard({ driver, onLogout }) {
           <div className="panel courier-dashboard-empty">Memuat penugasan...</div>
         ) : activeTab === 'assignments' ? (
           <section className="courier-tab-content" aria-label="Penugasan kurir">
-            <div className="courier-welcome-panel">
-              <span className="courier-welcome-icon"><Truck size={22} /></span>
-              <div>
-                <p>Selamat bertugas,</p>
-                <h2>{driver.name}</h2>
-              </div>
-              <div className="courier-welcome-portions">
-                <strong>{totalPortions.toLocaleString('id-ID')}</strong>
-                <span>total porsi</span>
-              </div>
-            </div>
-
-            <section className="panel courier-route-panel">
-              <div className="courier-section-heading">
-                <div><h2>Rute pengiriman</h2><p>{activeDeliveries.length} sekolah tujuan</p></div>
-                <Route size={20} />
-              </div>
-              {deliveries.length ? (
-                <ol className="courier-route-list">
-                  {deliveries.map((delivery, index) => (
-                    <li key={delivery.id} className={delivery.status === 'COMPLETED' ? 'completed' : ''}>
-                      <span className="courier-route-number">{index + 1}</span>
-                      <div className="courier-route-details">
-                        <strong>{delivery.school}</strong>
-                        <span><MapPin size={13} />{delivery.address || 'Alamat belum tersedia'}</span>
-                        <span><PackageCheck size={13} />{delivery.portions.toLocaleString('id-ID')} porsi</span>
-                      </div>
-                      <span className={`return-status return-status-${delivery.status === 'COMPLETED' ? 'approved' : delivery.status === 'ALERT' ? 'rejected' : 'pending'}`}>
-                        {STATUS_LABELS[delivery.status] || delivery.status}
-                      </span>
-                      <button
-                        type="button"
-                        className="courier-route-open"
-                        onClick={() => { setSelectedId(delivery.id); setActiveTab('navigation') }}
-                      >
-                        <span className="sr-only">Buka navigasi ke {delivery.school}</span>
-                        <ArrowRight size={17} />
-                      </button>
-                    </li>
-                  ))}
-                </ol>
-              ) : (
-                <div className="courier-dashboard-empty">
-                  <School size={24} />
-                  <h3>Belum ada penugasan</h3>
-                  <p>Rute sekolah akan muncul setelah admin menetapkan pengiriman kepada Anda.</p>
+            <div className="courier-assignment-grid">
+              <section className="panel courier-route-panel">
+                <div className="courier-section-heading">
+                  <div><h2>Rute pengiriman</h2><p>{activeDeliveries.length} sekolah tujuan</p></div>
+                  <Route size={20} />
                 </div>
-              )}
-            </section>
+                {deliveries.length ? (
+                  <ol className="courier-route-list">
+                    {deliveries.map((delivery, index) => (
+                      <li key={delivery.id} className={delivery.status === 'COMPLETED' ? 'completed' : ''}>
+                        <span className="courier-route-number">{index + 1}</span>
+                        <div className="courier-route-details">
+                          <strong>{delivery.school}</strong>
+                          <span><MapPin size={13} />{delivery.address || 'Alamat belum tersedia'}</span>
+                          <span><PackageCheck size={13} />{delivery.portions.toLocaleString('id-ID')} porsi</span>
+                        </div>
+                        <span className={`return-status return-status-${delivery.status === 'COMPLETED' ? 'approved' : delivery.status === 'ALERT' ? 'rejected' : 'pending'}`}>
+                          {STATUS_LABELS[delivery.status] || delivery.status}
+                        </span>
+                        <button
+                          type="button"
+                          className="courier-route-open"
+                          onClick={() => { setSelectedId(delivery.id); setActiveTab('navigation') }}
+                        >
+                          <span className="sr-only">Buka navigasi ke {delivery.school}</span>
+                          <ArrowRight size={17} />
+                        </button>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <div className="courier-dashboard-empty">
+                    <School size={24} />
+                    <h3>Belum ada penugasan</h3>
+                    <p>Rute sekolah akan muncul setelah admin menetapkan pengiriman kepada Anda.</p>
+                  </div>
+                )}
+              </section>
+
+              <aside className="panel courier-guide-panel">
+                <div className="courier-guide-heading">
+                  <span><CircleHelp size={18} /></span>
+                  <div><h2>Panduan operasional</h2><p>Langkah aman selama pengiriman</p></div>
+                </div>
+                {[
+                  ['1', 'Periksa penugasan', 'Pastikan sekolah tujuan dan jumlah porsi sesuai manifest.'],
+                  ['2', 'Jaga kondisi makanan', 'Bawa makanan dengan aman dan jaga kebersihan selama perjalanan.'],
+                  ['3', 'Perbarui status rute', 'Tandai mulai perjalanan dan konfirmasi tiba saat sampai di sekolah.'],
+                  ['4', 'Selesaikan serah terima', 'Serahkan makanan kepada petugas sekolah dan laporkan kendala kepada admin.'],
+                ].map(([number, title, description]) => (
+                  <article className="courier-guide-step" key={number}>
+                    <span>{number}</span>
+                    <div><strong>{title}</strong><p>{description}</p></div>
+                  </article>
+                ))}
+                <div className="courier-guide-notice">
+                  <Check size={14} />
+                  <p>Jika terjadi kendala, gunakan menu Navigasi untuk melaporkannya kepada admin.</p>
+                </div>
+              </aside>
+            </div>
           </section>
         ) : selectedDelivery ? (
           activeTab === 'navigation' ? (
@@ -323,6 +374,19 @@ function CourierDashboard({ driver, onLogout }) {
         <footer className="school-portal-footer">NutriTrack MBG <span>·</span> Program Makanan Bergizi Gratis</footer>
       </main>
     </div>
+  )
+}
+
+function CourierMetric({ icon, label, value, note }) {
+  return (
+    <article className="courier-dashboard-metric">
+      <div className="courier-dashboard-metric-heading">
+        <span>{label}</span>
+        <span className="courier-dashboard-metric-icon">{icon}</span>
+      </div>
+      <strong>{value}</strong>
+      <small>{note}</small>
+    </article>
   )
 }
 
