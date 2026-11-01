@@ -6286,6 +6286,31 @@ a.navigation-link:hover {
   color: #a34e36;
 }
 
+.school-qc-pin {
+  margin-top: 12px;
+  padding: 14px;
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  border: 1px solid #cfe0d0;
+  border-radius: 8px;
+  color: #356143;
+  background: #eff6ef;
+  text-align: center;
+}
+
+.school-qc-pin > span {
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  font-variant-numeric: tabular-nums;
+}
+
+.school-qc-pin > small {
+  color: #657369;
+  font-size: 10px;
+}
+
 .school-qc-empty {
   min-height: 180px;
   display: flex;

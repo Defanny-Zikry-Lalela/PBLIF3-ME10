@@ -262,6 +262,11 @@ function Dashboard() {
   }, [searchInput])
 
   useEffect(() => {
+    const timer = window.setInterval(() => setRefreshKey((key) => key + 1), 10_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
     const controller = new AbortController()
     const params = new URLSearchParams({
       page: String(page),
@@ -416,6 +421,7 @@ function Dashboard() {
                           {STATUS_LABELS[delivery.status] || delivery.status}
                         </div>
                         <span className="status-note">{delivery.statusNote}</span>
+                        <span className="status-note">QC: {delivery.qcStatus === 'QC_APPROVED' ? 'Disetujui' : delivery.qcStatus === 'QC_REJECTED' ? 'Perlu tindak lanjut' : 'Menunggu'}</span>
                       </td>
                       <td data-label="Aksi">
                         <button className="button-detail" type="button" onClick={() => setSelectedDelivery(delivery)}>Lihat detail <ChevronRight size={13} /></button>

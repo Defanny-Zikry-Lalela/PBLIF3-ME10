@@ -9,7 +9,6 @@ import {
   LogOut,
   MapPin,
   PackageCheck,
-  QrCode,
   Route,
   School,
   Truck,
@@ -58,6 +57,7 @@ function CourierDashboard({ driver, onLogout }) {
       signal: controller.signal,
     })
       .then(({ deliveries: assigned }) => {
+        setError('')
         setDeliveries(assigned)
         setSelectedId((currentId) => (
           assigned.some((delivery) => delivery.id === currentId)
@@ -77,7 +77,26 @@ function CourierDashboard({ driver, onLogout }) {
     return () => controller.abort()
   }, [])
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      apiRequest('/api/courier/dashboard', { tokenType: 'driver' })
+        .then(({ deliveries: assigned }) => {
+          setDeliveries(assigned)
+          setSelectedId((currentId) => (
+            assigned.some((delivery) => delivery.id === currentId && delivery.status !== 'COMPLETED')
+              ? currentId
+              : assigned.find((delivery) => delivery.status !== 'COMPLETED')?.id || ''
+          ))
+        })
+        .catch((requestError) => {
+          setError(requestError.message || 'Daftar penugasan gagal dimuat.')
+        })
+    }, 10_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
   const selectedDelivery = deliveries.find((delivery) => delivery.id === selectedId)
+  const activeDelivery = selectedDelivery?.status !== 'COMPLETED' ? selectedDelivery : null
   const activeDeliveries = deliveries.filter((delivery) => delivery.status !== 'COMPLETED')
   const totalPortions = activeDeliveries.reduce((total, delivery) => total + delivery.portions, 0)
   const taskStatus = deliveries.some((delivery) => delivery.status === 'ALERT')
@@ -133,8 +152,25 @@ function CourierDashboard({ driver, onLogout }) {
 
   async function submitHandover(event) {
     event.preventDefault()
-    if (!selectedDelivery || !/^\d{4}$/.test(pin)) return
-    if (await updateDelivery(selectedDelivery, 'COMPLETED')) setPin('')
+    if (!activeDelivery || !/^\d{4}$/.test(pin)) return
+    setSaving(true)
+    setError('')
+    setNotice('')
+    try {
+      const result = await apiRequest(`/api/courier/deliveries/${activeDelivery.id}/handover`, {
+        method: 'POST',
+        tokenType: 'driver',
+        body: JSON.stringify({ pin }),
+      })
+      setNotice(result.message)
+      setPin('')
+      const refreshed = await apiRequest('/api/courier/dashboard', { tokenType: 'driver' })
+      setDeliveries(refreshed.deliveries)
+    } catch (requestError) {
+      setError(requestError.message || 'Serah terima gagal dikonfirmasi.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -267,7 +303,7 @@ function CourierDashboard({ driver, onLogout }) {
               </aside>
             </div>
           </section>
-        ) : selectedDelivery ? (
+        ) : activeDelivery ? (
           activeTab === 'navigation' ? (
             <section className="courier-tab-content courier-operation-grid" aria-label="Navigasi pengiriman">
               <article className="panel courier-destination-card">
@@ -323,16 +359,23 @@ function CourierDashboard({ driver, onLogout }) {
           ) : (
             <section className="courier-tab-content panel courier-handover-panel" aria-label="Serah terima pengiriman">
               <div className="courier-section-heading">
-                <div><p className="courier-card-overline">Serah terima ke sekolah</p><h2>{selectedDelivery.school}</h2></div>
+                <div><p className="courier-card-overline">Serah terima ke sekolah</p><h2>{activeDelivery.school}</h2></div>
                 <span className="courier-destination-icon"><PackageCheck size={20} /></span>
               </div>
               <div className="courier-handover-grid">
                 <div className="courier-qr-area">
-                  <QrCode size={54} strokeWidth={1.4} />
-                  <strong>Kode QR belum tersedia</strong>
-                  <span>ID manifest: {selectedDelivery.id}</span>
-                  <small>Server belum menyediakan QR untuk manifest ini.</small>
+                  <PackageCheck size={54} strokeWidth={1.4} />
+                  <strong>{activeDelivery.qcStatus === 'QC_APPROVED'
+                    ? 'QC sekolah disetujui'
+                    : activeDelivery.qcStatus === 'QC_REJECTED'
+                      ? 'QC sekolah perlu tindak lanjut'
+                      : 'Menunggu konfirmasi QC sekolah'}</strong>
+                  <span>ID manifest: {activeDelivery.id}</span>
+                  <small>{activeDelivery.qcStatus === 'QC_APPROVED'
+                    ? 'Minta PIN 4 digit kepada petugas sekolah.'
+                    : 'Form PIN akan tersedia setelah sekolah menyetujui kondisi makanan.'}</small>
                 </div>
+                {activeDelivery.qcStatus === 'QC_APPROVED' ? (
                 <form className="courier-handover-form" onSubmit={submitHandover}>
                   <label htmlFor="handover-pin">PIN serah terima (4 digit)</label>
                   <input
@@ -348,19 +391,24 @@ function CourierDashboard({ driver, onLogout }) {
                     required
                   />
                   <dl className="courier-manifest-details">
-                    <div><dt>Sekolah tujuan</dt><dd>{selectedDelivery.school}</dd></div>
-                    <div><dt>Jumlah porsi manifest</dt><dd>{selectedDelivery.portions.toLocaleString('id-ID')} porsi</dd></div>
-                    <div><dt>Status</dt><dd>{STATUS_LABELS[selectedDelivery.status] || selectedDelivery.status}</dd></div>
+                    <div><dt>Sekolah tujuan</dt><dd>{activeDelivery.school}</dd></div>
+                    <div><dt>Jumlah porsi manifest</dt><dd>{activeDelivery.portions.toLocaleString('id-ID')} porsi</dd></div>
+                    <div><dt>Status</dt><dd>{STATUS_LABELS[activeDelivery.status] || activeDelivery.status}</dd></div>
                   </dl>
                   <button
                     className="button-primary"
                     type="submit"
-                    disabled={saving || !/^\d{4}$/.test(pin) || !['IN_TRANSIT', 'ALERT'].includes(selectedDelivery.status)}
+                    disabled={saving || !/^\d{4}$/.test(pin) || activeDelivery.status !== 'IN_TRANSIT'}
                   >
-                    <Check size={16} /> Konfirmasi Serah Terima Selesai
+                    <Check size={16} />{saving ? 'Memverifikasi…' : 'Konfirmasi Serah Terima Selesai'}
                   </button>
-                  <small className="courier-handover-note">PIN diperiksa formatnya di halaman ini; server saat ini belum memvalidasi PIN atau kode QR.</small>
+                  <small className="courier-handover-note">PIN diverifikasi terhadap kode unik yang diterbitkan server setelah QC sekolah disetujui.</small>
                 </form>
+                ) : (
+                  <div className="courier-handover-form courier-handover-note" role="status">
+                    Serah terima belum dapat diselesaikan. Minta petugas sekolah melakukan pemeriksaan dan konfirmasi QC terlebih dahulu.
+                  </div>
+                )}
               </div>
             </section>
           )

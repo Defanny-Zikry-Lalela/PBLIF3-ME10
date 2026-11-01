@@ -31,7 +31,11 @@ function SchoolDashboard({ school, onLogout }) {
     }
   }, [])
 
-  useEffect(() => { loadDashboard() }, [loadDashboard])
+  useEffect(() => {
+    loadDashboard()
+    const timer = window.setInterval(loadDashboard, 10_000)
+    return () => window.clearInterval(timer)
+  }, [loadDashboard])
 
   const delivery = data?.delivery
   const dateLabel = new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date())

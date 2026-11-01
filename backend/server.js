@@ -337,6 +337,9 @@ app.get('/api/school/dashboard', requireSchool, async (req, res, next) => {
         status: delivery.status,
         statusNote: delivery.statusNote,
         receivedAt: delivery.receivedAt,
+        qcStatus: delivery.qcStatus,
+        qcCondition: delivery.qcCondition,
+        handoverPin: delivery.handoverPin,
         driver: delivery.driver?.name || null,
       } : null,
       menu: menu ? {
@@ -345,6 +348,100 @@ app.get('/api/school/dashboard', requireSchool, async (req, res, next) => {
       } : null,
       updatedAt: new Date().toISOString(),
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/school/deliveries/:deliveryId/qc', requireSchool, async (req, res, next) => {
+  try {
+    const { condition } = req.body || {};
+    if (!['GOOD', 'POOR'].includes(condition)) {
+      return res.status(400).json({ message: 'Pilih kondisi Baik / Layak atau Kurang sebelum konfirmasi QC.' });
+    }
+
+    const delivery = await prisma.delivery.findFirst({
+      where: { id: req.params.deliveryId, schoolId: req.schoolAccount.schoolId },
+      select: { id: true, status: true, qcStatus: true, handoverPin: true },
+    });
+    if (!delivery) return res.status(404).json({ message: 'Pengiriman untuk sekolah Anda tidak ditemukan.' });
+    if (delivery.status !== 'IN_TRANSIT') {
+      return res.status(409).json({ message: 'QC hanya dapat dikonfirmasi saat kurir sedang dalam perjalanan.' });
+    }
+    if (delivery.qcStatus === 'QC_APPROVED') {
+      return res.json({
+        message: 'QC sudah disetujui. Gunakan PIN yang telah diterbitkan.',
+        qcStatus: delivery.qcStatus,
+        handoverPin: delivery.handoverPin,
+      });
+    }
+
+    if (condition === 'POOR') {
+      const result = await prisma.delivery.updateMany({
+        where: {
+          id: delivery.id,
+          schoolId: req.schoolAccount.schoolId,
+          status: 'IN_TRANSIT',
+          qcStatus: { in: ['PENDING', 'QC_REJECTED'] },
+        },
+        data: {
+          qcStatus: 'QC_REJECTED',
+          qcCondition: 'POOR',
+          handoverPin: null,
+          statusNote: 'QC sekolah menandai kondisi makanan kurang; perlu tindak lanjut.',
+        },
+      });
+      if (result.count !== 1) {
+        return res.status(409).json({ message: 'Status pengiriman berubah. Muat ulang data QC.' });
+      }
+      return res.json({
+        message: 'QC tercatat: kondisi makanan kurang. PIN serah terima tidak diterbitkan.',
+        qcStatus: 'QC_REJECTED',
+        handoverPin: null,
+      });
+    }
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const handoverPin = String(crypto.randomInt(0, 10_000)).padStart(4, '0');
+      try {
+        const result = await prisma.delivery.updateMany({
+          where: {
+            id: delivery.id,
+            schoolId: req.schoolAccount.schoolId,
+            status: 'IN_TRANSIT',
+            qcStatus: { in: ['PENDING', 'QC_REJECTED'] },
+          },
+          data: {
+            qcStatus: 'QC_APPROVED',
+            qcCondition: 'GOOD',
+            handoverPin,
+            statusNote: 'QC sekolah disetujui; menunggu konfirmasi serah terima kurir.',
+          },
+        });
+        if (result.count !== 1) {
+          const current = await prisma.delivery.findUnique({
+            where: { id: delivery.id },
+            select: { qcStatus: true, handoverPin: true },
+          });
+          if (current?.qcStatus === 'QC_APPROVED') {
+            return res.json({
+              message: 'QC sudah disetujui. Gunakan PIN yang telah diterbitkan.',
+              qcStatus: current.qcStatus,
+              handoverPin: current.handoverPin,
+            });
+          }
+          return res.status(409).json({ message: 'Status pengiriman berubah. Muat ulang data QC.' });
+        }
+        return res.json({
+          message: 'QC disetujui. PIN serah terima telah diterbitkan.',
+          qcStatus: 'QC_APPROVED',
+          handoverPin,
+        });
+      } catch (error) {
+        if (error.code !== 'P2002' || attempt === 4) throw error;
+      }
+    }
+    return res.status(503).json({ message: 'PIN unik belum dapat dibuat. Silakan coba kembali.' });
   } catch (error) {
     next(error);
   }
@@ -1188,6 +1285,7 @@ app.get('/api/courier/dashboard', requireDriver, async (req, res, next) => {
         statusNote: delivery.statusNote,
         departureTime: delivery.departureTime,
         receivedAt: delivery.receivedAt,
+        qcStatus: delivery.qcStatus,
         school: delivery.school.name,
         address: delivery.school.address,
       })),
@@ -1200,7 +1298,7 @@ app.get('/api/courier/dashboard', requireDriver, async (req, res, next) => {
 app.patch('/api/courier/deliveries/:deliveryId', requireDriver, async (req, res, next) => {
   try {
     const { status, note } = req.body || {};
-    if (!['IN_TRANSIT', 'COMPLETED', 'ALERT'].includes(status)
+    if (!['IN_TRANSIT', 'ALERT'].includes(status)
       || (note != null && (typeof note !== 'string' || note.trim().length > 500))
       || (status === 'ALERT' && (!note || note.trim().length < 5))) {
       return res.status(400).json({ message: 'Status atau catatan pembaruan pengiriman tidak valid.' });
@@ -1211,8 +1309,8 @@ app.patch('/api/courier/deliveries/:deliveryId', requireDriver, async (req, res,
     });
     if (!delivery) return res.status(404).json({ message: 'Pengiriman yang ditugaskan kepada Anda tidak ditemukan.' });
     const allowedTransition = (delivery.status === 'PREPARING' && status === 'IN_TRANSIT')
-      || (delivery.status === 'IN_TRANSIT' && ['COMPLETED', 'ALERT'].includes(status))
-      || (delivery.status === 'ALERT' && ['IN_TRANSIT', 'COMPLETED'].includes(status));
+      || (delivery.status === 'IN_TRANSIT' && status === 'ALERT')
+      || (delivery.status === 'ALERT' && status === 'IN_TRANSIT');
     if (!allowedTransition) {
       return res.status(409).json({ message: 'Perubahan status ini tidak sesuai dengan tahapan pengiriman saat ini.' });
     }
@@ -1221,12 +1319,9 @@ app.patch('/api/courier/deliveries/:deliveryId', requireDriver, async (req, res,
       status,
       statusNote: typeof note === 'string' && note.trim()
         ? note.trim()
-        : status === 'COMPLETED' ? 'Pengiriman diterima sekolah' : 'Kurir dalam perjalanan',
+        : status === 'ALERT' ? note.trim() : 'Kurir dalam perjalanan',
       ...(status === 'IN_TRANSIT' && {
         departureTime: now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' }),
-      }),
-      ...(status === 'COMPLETED' && {
-        receivedAt: now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' }),
       }),
     };
     const result = await prisma.delivery.updateMany({
@@ -1237,6 +1332,49 @@ app.patch('/api/courier/deliveries/:deliveryId', requireDriver, async (req, res,
       return res.status(409).json({ message: 'Status pengiriman berubah. Muat ulang daftar sebelum mencoba lagi.' });
     }
     res.json({ message: 'Pembaruan status pengiriman berhasil disimpan.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/courier/deliveries/:deliveryId/handover', requireDriver, async (req, res, next) => {
+  try {
+    const { pin } = req.body || {};
+    if (typeof pin !== 'string' || !/^\d{4}$/.test(pin)) {
+      return res.status(400).json({ message: 'Masukkan PIN serah terima yang terdiri dari 4 digit.' });
+    }
+    const delivery = await prisma.delivery.findFirst({
+      where: { id: req.params.deliveryId, driverId: req.driverAccount.driverId },
+      select: { id: true, status: true, qcStatus: true, handoverPin: true },
+    });
+    if (!delivery) return res.status(404).json({ message: 'Pengiriman yang ditugaskan kepada Anda tidak ditemukan.' });
+    if (delivery.status !== 'IN_TRANSIT' || delivery.qcStatus !== 'QC_APPROVED' || !delivery.handoverPin) {
+      return res.status(409).json({ message: 'Sekolah harus menyetujui QC sebelum serah terima dapat diselesaikan.' });
+    }
+    if (delivery.handoverPin !== pin) {
+      return res.status(400).json({ message: 'PIN serah terima tidak sesuai.' });
+    }
+
+    const now = new Date();
+    const result = await prisma.delivery.updateMany({
+      where: {
+        id: delivery.id,
+        driverId: req.driverAccount.driverId,
+        status: 'IN_TRANSIT',
+        qcStatus: 'QC_APPROVED',
+        handoverPin: pin,
+      },
+      data: {
+        status: 'COMPLETED',
+        statusNote: 'Pengiriman diterima sekolah setelah verifikasi PIN.',
+        receivedAt: now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' }),
+        handoverPin: null,
+      },
+    });
+    if (result.count !== 1) {
+      return res.status(409).json({ message: 'Status serah terima berubah. Muat ulang daftar pengiriman.' });
+    }
+    res.json({ message: 'Serah terima berhasil dikonfirmasi dan pengiriman selesai.' });
   } catch (error) {
     next(error);
   }
@@ -1524,6 +1662,7 @@ app.get('/api/admin/dashboard', requireAdmin, async (req, res, next) => {
         portions: delivery.portions,
         departureTime: delivery.departureTime,
         status: delivery.status,
+        qcStatus: delivery.qcStatus,
         statusNote: delivery.statusNote,
         receivedAt: delivery.receivedAt,
       })),
