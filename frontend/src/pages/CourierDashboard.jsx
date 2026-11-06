@@ -2,8 +2,11 @@ import { useEffect, useState } from 'react'
 import {
   AlertTriangle,
   ArrowRight,
+<<<<<<< HEAD
   Check,
   Clock3,
+  KeyRound,
+  LockKeyhole,
   LogOut,
   MapPin,
   PackageCheck,
@@ -11,8 +14,24 @@ import {
   Route,
   School,
   Truck,
+  X,
 } from 'lucide-react'
 import { apiRequest } from '../lib/api.js'
+import useBodyScrollLock from '../hooks/useBodyScrollLock.js'
+=======
+  CalendarDays,
+  Check,
+  CircleHelp,
+  Clock3,
+  LogOut,
+  MapPin,
+  PackageCheck,
+  Route,
+  School,
+  Truck,
+} from 'lucide-react'
+import { apiRequest } from '../lib/api.js'
+>>>>>>> c5f4a66e2349d5308c5323c5a6e344366abc9926
 
 const STATUS_LABELS = {
   PREPARING: 'Menunggu keberangkatan',
@@ -39,6 +58,23 @@ function CourierDashboard({ driver, onLogout }) {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [arrivedIds, setArrivedIds] = useState([])
+<<<<<<< HEAD
+  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false)
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [passwordConfirmation, setPasswordConfirmation] = useState('')
+  const [passwordError, setPasswordError] = useState('')
+  const [savingPassword, setSavingPassword] = useState(false)
+
+  useBodyScrollLock(passwordDialogOpen)
+=======
+  const [currentDate, setCurrentDate] = useState(() => new Date())
+
+  useEffect(() => {
+    const dateTimer = setInterval(() => setCurrentDate(new Date()), 60_000)
+    return () => clearInterval(dateTimer)
+  }, [])
+>>>>>>> c5f4a66e2349d5308c5323c5a6e344366abc9926
 
   useEffect(() => {
     const controller = new AbortController()
@@ -50,6 +86,10 @@ function CourierDashboard({ driver, onLogout }) {
       signal: controller.signal,
     })
       .then(({ deliveries: assigned }) => {
+<<<<<<< HEAD
+=======
+        setError('')
+>>>>>>> c5f4a66e2349d5308c5323c5a6e344366abc9926
         setDeliveries(assigned)
         setSelectedId((currentId) => (
           assigned.some((delivery) => delivery.id === currentId)
@@ -69,9 +109,45 @@ function CourierDashboard({ driver, onLogout }) {
     return () => controller.abort()
   }, [])
 
+<<<<<<< HEAD
   const selectedDelivery = deliveries.find((delivery) => delivery.id === selectedId)
   const activeDeliveries = deliveries.filter((delivery) => delivery.status !== 'COMPLETED')
   const totalPortions = activeDeliveries.reduce((total, delivery) => total + delivery.portions, 0)
+=======
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      apiRequest('/api/courier/dashboard', { tokenType: 'driver' })
+        .then(({ deliveries: assigned }) => {
+          setDeliveries(assigned)
+          setSelectedId((currentId) => (
+            assigned.some((delivery) => delivery.id === currentId && delivery.status !== 'COMPLETED')
+              ? currentId
+              : assigned.find((delivery) => delivery.status !== 'COMPLETED')?.id || ''
+          ))
+        })
+        .catch((requestError) => {
+          setError(requestError.message || 'Daftar penugasan gagal dimuat.')
+        })
+    }, 10_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  const selectedDelivery = deliveries.find((delivery) => delivery.id === selectedId)
+  const activeDelivery = selectedDelivery?.status !== 'COMPLETED' ? selectedDelivery : null
+  const activeDeliveries = deliveries.filter((delivery) => delivery.status !== 'COMPLETED')
+  const totalPortions = activeDeliveries.reduce((total, delivery) => total + delivery.portions, 0)
+  const taskStatus = deliveries.some((delivery) => delivery.status === 'ALERT')
+    ? 'Perlu perhatian'
+    : activeDeliveries.length
+      ? 'Sedang berjalan'
+      : 'Tidak ada tugas'
+  const dateLabel = new Intl.DateTimeFormat('id-ID', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(currentDate)
+>>>>>>> c5f4a66e2349d5308c5323c5a6e344366abc9926
 
   async function updateDelivery(delivery, status, note) {
     setSaving(true)
@@ -114,12 +190,61 @@ function CourierDashboard({ driver, onLogout }) {
 
   async function submitHandover(event) {
     event.preventDefault()
+<<<<<<< HEAD
     if (!selectedDelivery || !/^\d{4}$/.test(pin)) return
     if (await updateDelivery(selectedDelivery, 'COMPLETED')) setPin('')
   }
 
+  async function changePassword(event) {
+    event.preventDefault()
+    setPasswordError('')
+    if (newPassword !== passwordConfirmation) {
+      setPasswordError('Konfirmasi kata sandi baru belum sama.')
+      return
+    }
+
+    setSavingPassword(true)
+    try {
+      const result = await apiRequest('/api/courier/password', {
+        method: 'PATCH',
+        tokenType: 'driver',
+        body: JSON.stringify({ currentPassword, newPassword }),
+      })
+      setNotice(result.message)
+      setPasswordDialogOpen(false)
+      setCurrentPassword('')
+      setNewPassword('')
+      setPasswordConfirmation('')
+    } catch (requestError) {
+      setPasswordError(requestError.message || 'Kata sandi gagal diubah.')
+    } finally {
+      setSavingPassword(false)
+=======
+    if (!activeDelivery || !/^\d{4}$/.test(pin)) return
+    setSaving(true)
+    setError('')
+    setNotice('')
+    try {
+      const result = await apiRequest(`/api/courier/deliveries/${activeDelivery.id}/handover`, {
+        method: 'POST',
+        tokenType: 'driver',
+        body: JSON.stringify({ pin }),
+      })
+      setNotice(result.message)
+      setPin('')
+      const refreshed = await apiRequest('/api/courier/dashboard', { tokenType: 'driver' })
+      setDeliveries(refreshed.deliveries)
+    } catch (requestError) {
+      setError(requestError.message || 'Serah terima gagal dikonfirmasi.')
+    } finally {
+      setSaving(false)
+>>>>>>> c5f4a66e2349d5308c5323c5a6e344366abc9926
+    }
+  }
+
   return (
     <div className="courier-dashboard-shell">
+<<<<<<< HEAD
       <header className="school-portal-topbar courier-dashboard-topbar">
         <a className="school-portal-brand" href="/courier/dashboard">
           <span><PackageCheck size={19} /></span>
@@ -128,7 +253,25 @@ function CourierDashboard({ driver, onLogout }) {
         <div className="courier-profile">
           <span className="school-user-avatar">{driver.name.trim().charAt(0).toUpperCase()}</span>
           <span><strong>{driver.name}</strong><small>Kurir MBG</small></span>
+          {driver.role !== 'ADMIN' && (
+            <button type="button" aria-label="Ubah password" onClick={() => { setPasswordError(''); setPasswordDialogOpen(true) }}>
+              <KeyRound size={14} /> Ubah password
+            </button>
+          )}
           <button type="button" onClick={onLogout}><LogOut size={14} /> Keluar</button>
+=======
+      <header className="courier-dashboard-topbar">
+        <div className="courier-dashboard-topbar-inner">
+          <a className="school-portal-brand" href="/courier/dashboard">
+            <span><PackageCheck size={19} /></span>
+            <span><strong>NutriTrack <b>MBG</b></strong><small>PORTAL KURIR</small></span>
+          </a>
+          <div className="courier-profile">
+            <span className="school-user-avatar">{driver.name.trim().charAt(0).toUpperCase()}</span>
+            <span><strong>{driver.name}</strong><small>Kurir MBG</small></span>
+            <button type="button" onClick={onLogout}><LogOut size={14} /><span>Keluar</span></button>
+          </div>
+>>>>>>> c5f4a66e2349d5308c5323c5a6e344366abc9926
         </div>
       </header>
 
@@ -139,12 +282,39 @@ function CourierDashboard({ driver, onLogout }) {
             <h1>Dashboard kurir</h1>
             <p className="page-description">Kelola rute dan serah terima penugasan MBG Anda.</p>
           </div>
+<<<<<<< HEAD
           <div className="courier-manifest-total">
             <PackageCheck size={19} />
             <span><strong>{totalPortions.toLocaleString('id-ID')}</strong><small>porsi dibawa</small></span>
           </div>
         </div>
 
+=======
+          <div className="date-badge courier-date-badge"><CalendarDays size={15} />{dateLabel}</div>
+        </div>
+
+        <section className="courier-dashboard-metrics" aria-label="Ringkasan tugas kurir">
+          <CourierMetric
+            icon={<PackageCheck size={17} />}
+            label="Porsi dibawa"
+            value={loading ? '…' : totalPortions.toLocaleString('id-ID')}
+            note="Total porsi pengiriman aktif"
+          />
+          <CourierMetric
+            icon={<School size={17} />}
+            label="Sekolah tujuan"
+            value={loading ? '…' : activeDeliveries.length.toLocaleString('id-ID')}
+            note="Pengiriman belum selesai"
+          />
+          <CourierMetric
+            icon={<Route size={17} />}
+            label="Status tugas"
+            value={loading ? '…' : taskStatus}
+            note={`${activeDeliveries.length} pengiriman belum selesai`}
+          />
+        </section>
+
+>>>>>>> c5f4a66e2349d5308c5323c5a6e344366abc9926
         <nav className="courier-dashboard-tabs" aria-label="Navigasi dashboard kurir">
           {TABS.map((tab) => (
             <button
@@ -166,6 +336,7 @@ function CourierDashboard({ driver, onLogout }) {
           <div className="panel courier-dashboard-empty">Memuat penugasan...</div>
         ) : activeTab === 'assignments' ? (
           <section className="courier-tab-content" aria-label="Penugasan kurir">
+<<<<<<< HEAD
             <div className="courier-welcome-panel">
               <span className="courier-welcome-icon"><Truck size={22} /></span>
               <div>
@@ -217,6 +388,71 @@ function CourierDashboard({ driver, onLogout }) {
             </section>
           </section>
         ) : selectedDelivery ? (
+=======
+            <div className="courier-assignment-grid">
+              <section className="panel courier-route-panel">
+                <div className="courier-section-heading">
+                  <div><h2>Rute pengiriman</h2><p>{activeDeliveries.length} sekolah tujuan</p></div>
+                  <Route size={20} />
+                </div>
+                {deliveries.length ? (
+                  <ol className="courier-route-list">
+                    {deliveries.map((delivery, index) => (
+                      <li key={delivery.id} className={delivery.status === 'COMPLETED' ? 'completed' : ''}>
+                        <span className="courier-route-number">{index + 1}</span>
+                        <div className="courier-route-details">
+                          <strong>{delivery.school}</strong>
+                          <span><MapPin size={13} />{delivery.address || 'Alamat belum tersedia'}</span>
+                          <span><PackageCheck size={13} />{delivery.portions.toLocaleString('id-ID')} porsi</span>
+                        </div>
+                        <span className={`return-status return-status-${delivery.status === 'COMPLETED' ? 'approved' : delivery.status === 'ALERT' ? 'rejected' : 'pending'}`}>
+                          {STATUS_LABELS[delivery.status] || delivery.status}
+                        </span>
+                        <button
+                          type="button"
+                          className="courier-route-open"
+                          onClick={() => { setSelectedId(delivery.id); setActiveTab('navigation') }}
+                        >
+                          <span className="sr-only">Buka navigasi ke {delivery.school}</span>
+                          <ArrowRight size={17} />
+                        </button>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <div className="courier-dashboard-empty">
+                    <School size={24} />
+                    <h3>Belum ada penugasan</h3>
+                    <p>Rute sekolah akan muncul setelah admin menetapkan pengiriman kepada Anda.</p>
+                  </div>
+                )}
+              </section>
+
+              <aside className="panel courier-guide-panel">
+                <div className="courier-guide-heading">
+                  <span><CircleHelp size={18} /></span>
+                  <div><h2>Panduan operasional</h2><p>Langkah aman selama pengiriman</p></div>
+                </div>
+                {[
+                  ['1', 'Periksa penugasan', 'Pastikan sekolah tujuan dan jumlah porsi sesuai manifest.'],
+                  ['2', 'Jaga kondisi makanan', 'Bawa makanan dengan aman dan jaga kebersihan selama perjalanan.'],
+                  ['3', 'Perbarui status rute', 'Tandai mulai perjalanan dan konfirmasi tiba saat sampai di sekolah.'],
+                  ['4', 'Selesaikan serah terima', 'Serahkan makanan kepada petugas sekolah dan laporkan kendala kepada admin.'],
+                ].map(([number, title, description]) => (
+                  <article className="courier-guide-step" key={number}>
+                    <span>{number}</span>
+                    <div><strong>{title}</strong><p>{description}</p></div>
+                  </article>
+                ))}
+                <div className="courier-guide-notice">
+                  <Check size={14} />
+                  <p>Jika terjadi kendala, gunakan menu Navigasi untuk melaporkannya kepada admin.</p>
+                </div>
+              </aside>
+            </div>
+          </section>
+        ) : activeDelivery ? (
+>>>>>>> c5f4a66e2349d5308c5323c5a6e344366abc9926
           activeTab === 'navigation' ? (
             <section className="courier-tab-content courier-operation-grid" aria-label="Navigasi pengiriman">
               <article className="panel courier-destination-card">
@@ -272,16 +508,35 @@ function CourierDashboard({ driver, onLogout }) {
           ) : (
             <section className="courier-tab-content panel courier-handover-panel" aria-label="Serah terima pengiriman">
               <div className="courier-section-heading">
+<<<<<<< HEAD
                 <div><p className="courier-card-overline">Serah terima ke sekolah</p><h2>{selectedDelivery.school}</h2></div>
+=======
+                <div><p className="courier-card-overline">Serah terima ke sekolah</p><h2>{activeDelivery.school}</h2></div>
+>>>>>>> c5f4a66e2349d5308c5323c5a6e344366abc9926
                 <span className="courier-destination-icon"><PackageCheck size={20} /></span>
               </div>
               <div className="courier-handover-grid">
                 <div className="courier-qr-area">
+<<<<<<< HEAD
                   <QrCode size={54} strokeWidth={1.4} />
                   <strong>Kode QR belum tersedia</strong>
                   <span>ID manifest: {selectedDelivery.id}</span>
                   <small>Server belum menyediakan QR untuk manifest ini.</small>
                 </div>
+=======
+                  <PackageCheck size={54} strokeWidth={1.4} />
+                  <strong>{activeDelivery.qcStatus === 'QC_APPROVED'
+                    ? 'QC sekolah disetujui'
+                    : activeDelivery.qcStatus === 'QC_REJECTED'
+                      ? 'QC sekolah perlu tindak lanjut'
+                      : 'Menunggu konfirmasi QC sekolah'}</strong>
+                  <span>ID manifest: {activeDelivery.id}</span>
+                  <small>{activeDelivery.qcStatus === 'QC_APPROVED'
+                    ? 'Minta PIN 4 digit kepada petugas sekolah.'
+                    : 'Form PIN akan tersedia setelah sekolah menyetujui kondisi makanan.'}</small>
+                </div>
+                {activeDelivery.qcStatus === 'QC_APPROVED' ? (
+>>>>>>> c5f4a66e2349d5308c5323c5a6e344366abc9926
                 <form className="courier-handover-form" onSubmit={submitHandover}>
                   <label htmlFor="handover-pin">PIN serah terima (4 digit)</label>
                   <input
@@ -297,19 +552,39 @@ function CourierDashboard({ driver, onLogout }) {
                     required
                   />
                   <dl className="courier-manifest-details">
+<<<<<<< HEAD
                     <div><dt>Sekolah tujuan</dt><dd>{selectedDelivery.school}</dd></div>
                     <div><dt>Jumlah porsi manifest</dt><dd>{selectedDelivery.portions.toLocaleString('id-ID')} porsi</dd></div>
                     <div><dt>Status</dt><dd>{STATUS_LABELS[selectedDelivery.status] || selectedDelivery.status}</dd></div>
+=======
+                    <div><dt>Sekolah tujuan</dt><dd>{activeDelivery.school}</dd></div>
+                    <div><dt>Jumlah porsi manifest</dt><dd>{activeDelivery.portions.toLocaleString('id-ID')} porsi</dd></div>
+                    <div><dt>Status</dt><dd>{STATUS_LABELS[activeDelivery.status] || activeDelivery.status}</dd></div>
+>>>>>>> c5f4a66e2349d5308c5323c5a6e344366abc9926
                   </dl>
                   <button
                     className="button-primary"
                     type="submit"
+<<<<<<< HEAD
                     disabled={saving || !/^\d{4}$/.test(pin) || !['IN_TRANSIT', 'ALERT'].includes(selectedDelivery.status)}
                   >
                     <Check size={16} /> Konfirmasi Serah Terima Selesai
                   </button>
                   <small className="courier-handover-note">PIN diperiksa formatnya di halaman ini; server saat ini belum memvalidasi PIN atau kode QR.</small>
                 </form>
+=======
+                    disabled={saving || !/^\d{4}$/.test(pin) || activeDelivery.status !== 'IN_TRANSIT'}
+                  >
+                    <Check size={16} />{saving ? 'Memverifikasi…' : 'Konfirmasi Serah Terima Selesai'}
+                  </button>
+                  <small className="courier-handover-note">PIN diverifikasi terhadap kode unik yang diterbitkan server setelah QC sekolah disetujui.</small>
+                </form>
+                ) : (
+                  <div className="courier-handover-form courier-handover-note" role="status">
+                    Serah terima belum dapat diselesaikan. Minta petugas sekolah melakukan pemeriksaan dan konfirmasi QC terlebih dahulu.
+                  </div>
+                )}
+>>>>>>> c5f4a66e2349d5308c5323c5a6e344366abc9926
               </div>
             </section>
           )
@@ -322,8 +597,48 @@ function CourierDashboard({ driver, onLogout }) {
         )}
         <footer className="school-portal-footer">NutriTrack MBG <span>·</span> Program Makanan Bergizi Gratis</footer>
       </main>
+<<<<<<< HEAD
+      {passwordDialogOpen && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPasswordDialogOpen(false) }}>
+          <section className="detail-modal school-password-modal" role="dialog" aria-modal="true" aria-labelledby="courier-password-title">
+            <div className="modal-heading">
+              <div><p className="eyebrow">Keamanan akun kurir</p><h2 id="courier-password-title">Ubah password</h2></div>
+              <button className="icon-button" type="button" aria-label="Tutup ubah password" onClick={() => setPasswordDialogOpen(false)}><X size={19} /></button>
+            </div>
+            <p className="school-modal-description">Password awal akun Anda sama dengan nama kurir. Ganti dengan password baru minimal 12 karakter.</p>
+            {passwordError && <div className="inline-notice error-notice" role="alert">{passwordError}</div>}
+            <form className="school-form" onSubmit={changePassword}>
+              <label className="form-label" htmlFor="courier-current-password">Password saat ini</label>
+              <input className="management-input" id="courier-current-password" type="password" autoComplete="current-password" required value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
+              <label className="form-label" htmlFor="courier-new-password">Password baru</label>
+              <input className="management-input" id="courier-new-password" type="password" autoComplete="new-password" minLength={12} maxLength={128} required value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+              <label className="form-label" htmlFor="courier-confirm-password">Ulangi password baru</label>
+              <input className="management-input" id="courier-confirm-password" type="password" autoComplete="new-password" minLength={12} maxLength={128} required value={passwordConfirmation} onChange={(event) => setPasswordConfirmation(event.target.value)} />
+              <button className="button-primary activation-submit" type="submit" disabled={savingPassword}>{savingPassword ? 'Menyimpan...' : <>Simpan password <LockKeyhole size={15} /></>}</button>
+            </form>
+          </section>
+        </div>
+      )}
+=======
+>>>>>>> c5f4a66e2349d5308c5323c5a6e344366abc9926
     </div>
   )
 }
 
+<<<<<<< HEAD
+=======
+function CourierMetric({ icon, label, value, note }) {
+  return (
+    <article className="courier-dashboard-metric">
+      <div className="courier-dashboard-metric-heading">
+        <span>{label}</span>
+        <span className="courier-dashboard-metric-icon">{icon}</span>
+      </div>
+      <strong>{value}</strong>
+      <small>{note}</small>
+    </article>
+  )
+}
+
+>>>>>>> c5f4a66e2349d5308c5323c5a6e344366abc9926
 export default CourierDashboard

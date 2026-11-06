@@ -12,9 +12,13 @@ import NutritionPage from './pages/NutritionPage.jsx'
 import SchoolManagementPage from './pages/SchoolManagementPage.jsx'
 import SchoolActivationPage from './pages/SchoolActivationPage.jsx'
 import SchoolPortal from './pages/SchoolPortal.jsx'
+
+import SchoolQC from './pages/SchoolQC.jsx'
+import SchoolReturn from './pages/SchoolReturn.jsx'
 import CourierDashboard from './pages/CourierDashboard.jsx'
 import DriverActivationPage from './pages/DriverActivationPage.jsx'
 import CourierManagementPage from './pages/CourierManagementPage.jsx'
+import AssignmentsPage from './pages/AssignmentsPage.jsx'
 import ReturnsPage from './pages/ReturnsPage.jsx'
 import AdminLayout from './components/AdminLayout.jsx'
 import ProtectedRoute from './components/ProtectedRoute.jsx'
@@ -105,9 +109,20 @@ function AppRoutes() {
       <Route path="/courier/activate" element={<DriverActivationPage />} />
       <Route path="/school/login" element={<Navigate to={schoolUser ? '/school/dashboard' : '/login'} replace />} />
       <Route path="/courier/login" element={<Navigate to={driverUser ? '/courier/dashboard' : '/login'} replace />} />
+      
       <Route path="/school/dashboard" element={schoolUser
         ? <SchoolPortal school={schoolUser} onLogout={() => { clearToken('school'); setSchoolUser(null) }} />
         : <Navigate to="/school/login" replace />} />
+
+      {/* Rute Returns Sekolah menggunakan SchoolPortal view="returns" */}
+      <Route path="/school/returns" element={schoolUser
+        ? <SchoolPortal school={schoolUser} onLogout={() => { clearToken('school'); setSchoolUser(null) }} view="returns" />
+        : <Navigate to="/school/login" replace />} />
+
+      <Route path="/school/qc" element={schoolUser
+        ? <SchoolQC school={schoolUser} onLogout={() => { clearToken('school'); setSchoolUser(null) }} />
+        : <Navigate to="/school/login" replace />} />
+
       <Route path="/courier/dashboard" element={(
         <ProtectedRoute user={driverUser || admin}>
           <CourierDashboard
@@ -124,6 +139,7 @@ function AppRoutes() {
           />
         </ProtectedRoute>
       )} />
+      
       <Route
         path="/login"
         element={admin?.role === 'ADMIN'
@@ -134,6 +150,7 @@ function AppRoutes() {
               ? <Navigate to="/courier/dashboard" replace />
               : <Login onAdminLogin={setAdmin} onSchoolLogin={setSchoolUser} onDriverLogin={setDriverUser} />}
       />
+      
       <Route
         path="/dashboard"
         element={(
@@ -144,6 +161,7 @@ function AppRoutes() {
           </ProtectedRoute>
         )}
       />
+      
       <Route
         path="/admin/dashboard"
         element={(
@@ -154,6 +172,7 @@ function AppRoutes() {
           </ProtectedRoute>
         )}
       />
+      
       <Route path="/nutrition" element={(
         <ProtectedRoute user={admin} requiredRole="ADMIN">
           <AdminLayout admin={admin} onLogout={() => { clearToken(); setAdmin(null) }}>
@@ -161,6 +180,7 @@ function AppRoutes() {
           </AdminLayout>
         </ProtectedRoute>
       )} />
+      
       <Route path="/schools" element={(
         <ProtectedRoute user={admin} requiredRole="ADMIN">
           <AdminLayout admin={admin} onLogout={() => { clearToken(); setAdmin(null) }}>
@@ -168,6 +188,7 @@ function AppRoutes() {
           </AdminLayout>
         </ProtectedRoute>
       )} />
+      
       <Route path="/drivers" element={(
         <ProtectedRoute user={admin} requiredRole="ADMIN">
           <AdminLayout admin={admin} onLogout={() => { clearToken(); setAdmin(null) }}>
@@ -175,6 +196,15 @@ function AppRoutes() {
           </AdminLayout>
         </ProtectedRoute>
       )} />
+      
+      <Route path="/assignments" element={(
+        <ProtectedRoute user={admin} requiredRole="ADMIN">
+          <AdminLayout admin={admin} onLogout={() => { clearToken(); setAdmin(null) }}>
+            <AssignmentsPage />
+          </AdminLayout>
+        </ProtectedRoute>
+      )} />
+      
       <Route path="/returns" element={(
         <ProtectedRoute user={admin} requiredRole="ADMIN">
           <AdminLayout admin={admin} onLogout={() => { clearToken(); setAdmin(null) }}>
@@ -182,6 +212,7 @@ function AppRoutes() {
           </AdminLayout>
         </ProtectedRoute>
       )} />
+      
       <Route path="*" element={<Navigate to={admin?.role === 'ADMIN' ? '/admin/dashboard' : schoolUser ? '/school/dashboard' : driverUser?.role === 'COURIER' ? '/courier/dashboard' : '/login'} replace />} />
     </Routes>
   )
@@ -252,6 +283,11 @@ function Dashboard() {
     }, 250)
     return () => window.clearTimeout(timer)
   }, [searchInput])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setRefreshKey((key) => key + 1), 10_000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -408,6 +444,7 @@ function Dashboard() {
                           {STATUS_LABELS[delivery.status] || delivery.status}
                         </div>
                         <span className="status-note">{delivery.statusNote}</span>
+                        <span className="status-note">QC: {delivery.qcStatus === 'QC_APPROVED' ? 'Disetujui' : delivery.qcStatus === 'QC_REJECTED' ? 'Perlu tindak lanjut' : 'Menunggu'}</span>
                       </td>
                       <td data-label="Aksi">
                         <button className="button-detail" type="button" onClick={() => setSelectedDelivery(delivery)}>Lihat detail <ChevronRight size={13} /></button>

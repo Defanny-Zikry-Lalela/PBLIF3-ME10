@@ -51,6 +51,9 @@ model Delivery {
   status        String   @default("PREPARING")
   statusNote    String?
   receivedAt    String?
+  qcStatus      String   @default("PENDING")
+  qcCondition   String?
+  handoverPin   String?  @unique
   schoolId      String
   school        School   @relation(fields: [schoolId], references: [id])
   driverId      String?

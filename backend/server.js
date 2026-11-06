@@ -3,7 +3,10 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 const nodemailer = require('nodemailer');
+const multer = require('multer');
 const { PrismaClient } = require('@prisma/client');
 require('dotenv').config();
 
@@ -12,13 +15,50 @@ const prisma = new PrismaClient();
 const PORT = Number(process.env.PORT) || 5000;
 const JWT_SECRET = process.env.JWT_SECRET;
 const EDUCATION_LEVELS = ['SD', 'SMP', 'SMA', 'SMK', 'SLB'];
+const RETURN_EVIDENCE_DIRECTORY = path.join(__dirname, 'uploads', 'returns');
+const MAX_RETURN_EVIDENCE_BYTES = 5 * 1024 * 1024;
+const RETURN_EVIDENCE_TYPES = {
+  'image/jpeg': {
+    extension: 'jpg',
+    matches: (buffer) => buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff,
+  },
+  'image/png': {
+    extension: 'png',
+    matches: (buffer) => buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+  },
+  'image/webp': {
+    extension: 'webp',
+    matches: (buffer) => buffer.length >= 12 && buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP',
+  },
+  'application/pdf': {
+    extension: 'pdf',
+    matches: (buffer) => buffer.length >= 5 && buffer.toString('ascii', 0, 5) === '%PDF-',
+  },
+};
 
 if (!JWT_SECRET || JWT_SECRET.length < 32) {
   throw new Error('JWT_SECRET wajib diisi dengan nilai acak minimal 32 karakter.');
 }
 
 app.use(cors({ origin: process.env.FRONTEND_ORIGIN || 'http://localhost:5173' }));
-app.use(express.json({ limit: '10kb' }));
+app.use((req, res, next) => {
+  const limit = req.method === 'POST' && req.path === '/api/school/returns' ? '7mb' : '10kb';
+  express.json({ limit })(req, res, next);
+});
+app.use('/api/returns/evidence', express.static(RETURN_EVIDENCE_DIRECTORY, {
+  dotfiles: 'deny',
+  index: false,
+  setHeaders(res) {
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.setHeader('Content-Disposition', 'inline');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+  },
+}));
+
+const returnProofUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 5, parts: 6 },
+});
 
 app.get('/', (req, res) => {
   res.json({ message: 'API NutriTrack MBG berjalan.' });
@@ -85,8 +125,22 @@ async function authenticateDriver(username, password) {
     where: { email: username.trim().toLowerCase() },
     include: { driver: true },
   });
-  if (!account?.isActive || !account.driver.isActive || !account.passwordHash
+  if (!account?.driver.isActive || !account.passwordHash
     || !(await bcrypt.compare(password, account.passwordHash))) return null;
+  if (!account.isActive) {
+    const activatedAt = new Date();
+    await prisma.$transaction([
+      prisma.driverUser.update({ where: { id: account.id }, data: { isActive: true } }),
+      prisma.driverInvitation.updateMany({
+        where: { driverUserId: account.id, acceptedAt: null },
+        data: { acceptedAt: activatedAt },
+      }),
+      prisma.emailOutbox.updateMany({
+        where: { driverInvitation: { driverUserId: account.id }, status: 'PENDING' },
+        data: { status: 'FAILED', lastError: 'Kurir sudah masuk. Email kredensial lama tidak perlu dikirim ulang.' },
+      }),
+    ]);
+  }
   return createDriverSession(account);
 }
 
@@ -254,6 +308,31 @@ app.get('/api/auth/driver/me', requireDriver, (req, res) => {
   });
 });
 
+app.patch('/api/courier/password', requireDriver, async (req, res, next) => {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    if (typeof currentPassword !== 'string' || !currentPassword
+      || typeof newPassword !== 'string' || newPassword.length < 12 || newPassword.length > 128) {
+      return res.status(400).json({ message: 'Masukkan kata sandi saat ini dan kata sandi baru minimal 12 karakter.' });
+    }
+    if (!(await bcrypt.compare(currentPassword, req.driverAccount.passwordHash))) {
+      return res.status(400).json({ message: 'Kata sandi saat ini tidak sesuai.' });
+    }
+    if (currentPassword === newPassword) {
+      return res.status(400).json({ message: 'Kata sandi baru harus berbeda dari kata sandi saat ini.' });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+    await prisma.driverUser.update({
+      where: { id: req.driverAccount.id },
+      data: { passwordHash },
+    });
+    res.json({ message: 'Kata sandi akun kurir berhasil diubah.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/auth/school/me', requireSchool, (req, res) => {
   res.json({
     school: {
@@ -331,6 +410,9 @@ app.get('/api/school/dashboard', requireSchool, async (req, res, next) => {
         status: delivery.status,
         statusNote: delivery.statusNote,
         receivedAt: delivery.receivedAt,
+        qcStatus: delivery.qcStatus,
+        qcCondition: delivery.qcCondition,
+        handoverPin: delivery.handoverPin,
         driver: delivery.driver?.name || null,
       } : null,
       menu: menu ? {
@@ -339,6 +421,100 @@ app.get('/api/school/dashboard', requireSchool, async (req, res, next) => {
       } : null,
       updatedAt: new Date().toISOString(),
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/school/deliveries/:deliveryId/qc', requireSchool, async (req, res, next) => {
+  try {
+    const { condition } = req.body || {};
+    if (!['GOOD', 'POOR'].includes(condition)) {
+      return res.status(400).json({ message: 'Pilih kondisi Baik / Layak atau Kurang sebelum konfirmasi QC.' });
+    }
+
+    const delivery = await prisma.delivery.findFirst({
+      where: { id: req.params.deliveryId, schoolId: req.schoolAccount.schoolId },
+      select: { id: true, status: true, qcStatus: true, handoverPin: true },
+    });
+    if (!delivery) return res.status(404).json({ message: 'Pengiriman untuk sekolah Anda tidak ditemukan.' });
+    if (delivery.status !== 'IN_TRANSIT') {
+      return res.status(409).json({ message: 'QC hanya dapat dikonfirmasi saat kurir sedang dalam perjalanan.' });
+    }
+    if (delivery.qcStatus === 'QC_APPROVED') {
+      return res.json({
+        message: 'QC sudah disetujui. Gunakan PIN yang telah diterbitkan.',
+        qcStatus: delivery.qcStatus,
+        handoverPin: delivery.handoverPin,
+      });
+    }
+
+    if (condition === 'POOR') {
+      const result = await prisma.delivery.updateMany({
+        where: {
+          id: delivery.id,
+          schoolId: req.schoolAccount.schoolId,
+          status: 'IN_TRANSIT',
+          qcStatus: { in: ['PENDING', 'QC_REJECTED'] },
+        },
+        data: {
+          qcStatus: 'QC_REJECTED',
+          qcCondition: 'POOR',
+          handoverPin: null,
+          statusNote: 'QC sekolah menandai kondisi makanan kurang; perlu tindak lanjut.',
+        },
+      });
+      if (result.count !== 1) {
+        return res.status(409).json({ message: 'Status pengiriman berubah. Muat ulang data QC.' });
+      }
+      return res.json({
+        message: 'QC tercatat: kondisi makanan kurang. PIN serah terima tidak diterbitkan.',
+        qcStatus: 'QC_REJECTED',
+        handoverPin: null,
+      });
+    }
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const handoverPin = String(crypto.randomInt(0, 10_000)).padStart(4, '0');
+      try {
+        const result = await prisma.delivery.updateMany({
+          where: {
+            id: delivery.id,
+            schoolId: req.schoolAccount.schoolId,
+            status: 'IN_TRANSIT',
+            qcStatus: { in: ['PENDING', 'QC_REJECTED'] },
+          },
+          data: {
+            qcStatus: 'QC_APPROVED',
+            qcCondition: 'GOOD',
+            handoverPin,
+            statusNote: 'QC sekolah disetujui; menunggu konfirmasi serah terima kurir.',
+          },
+        });
+        if (result.count !== 1) {
+          const current = await prisma.delivery.findUnique({
+            where: { id: delivery.id },
+            select: { qcStatus: true, handoverPin: true },
+          });
+          if (current?.qcStatus === 'QC_APPROVED') {
+            return res.json({
+              message: 'QC sudah disetujui. Gunakan PIN yang telah diterbitkan.',
+              qcStatus: current.qcStatus,
+              handoverPin: current.handoverPin,
+            });
+          }
+          return res.status(409).json({ message: 'Status pengiriman berubah. Muat ulang data QC.' });
+        }
+        return res.json({
+          message: 'QC disetujui. PIN serah terima telah diterbitkan.',
+          qcStatus: 'QC_APPROVED',
+          handoverPin,
+        });
+      } catch (error) {
+        if (error.code !== 'P2002' || attempt === 4) throw error;
+      }
+    }
+    return res.status(503).json({ message: 'PIN unik belum dapat dibuat. Silakan coba kembali.' });
   } catch (error) {
     next(error);
   }
@@ -364,6 +540,7 @@ app.get('/api/school/returns', requireSchool, async (req, res, next) => {
         id: delivery.id,
         date: delivery.date,
         portions: delivery.portions,
+        status: delivery.status,
       })),
       returns: claims,
     });
@@ -372,12 +549,22 @@ app.get('/api/school/returns', requireSchool, async (req, res, next) => {
   }
 });
 
+
 app.post('/api/school/returns', requireSchool, async (req, res, next) => {
+  let storedEvidencePath = null;
+
+app.post('/api/school/returns', requireSchool, returnProofUpload.single('proofFile'), async (req, res, next) => {
+
   try {
-    const { deliveryId, type, portions, note, evidenceUrl } = req.body || {};
+    const { deliveryId, type, portions, note, evidence } = req.body || {};
     const returnedPortions = Number(portions);
     const allowedTypes = ['Kualitas makanan', 'Kemasan rusak', 'Jumlah tidak sesuai', 'Keterlambatan', 'Lainnya'];
+
+    if (req.body?.evidenceUrl != null) {
+      return res.status(400).json({ message: 'Unggah bukti sebagai file, bukan tautan.' });
+
     let normalizedEvidenceUrl = null;
+    const proofFile = req.file;
     if (evidenceUrl != null && evidenceUrl !== '') {
       try {
         const parsedUrl = new URL(evidenceUrl);
@@ -386,14 +573,53 @@ app.post('/api/school/returns', requireSchool, async (req, res, next) => {
       } catch {
         return res.status(400).json({ message: 'Tautan bukti harus berupa alamat web HTTP atau HTTPS yang valid.' });
       }
+
+    }
+    if (proofFile) {
+      const isJpeg = proofFile.mimetype === 'image/jpeg'
+        && proofFile.buffer[0] === 0xff && proofFile.buffer[1] === 0xd8 && proofFile.buffer[2] === 0xff;
+      const isPng = proofFile.mimetype === 'image/png'
+        && proofFile.buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+      const isWebp = proofFile.mimetype === 'image/webp'
+        && proofFile.buffer.toString('ascii', 0, 4) === 'RIFF'
+        && proofFile.buffer.toString('ascii', 8, 12) === 'WEBP';
+      if (!isJpeg && !isPng && !isWebp) {
+        return res.status(400).json({ message: 'Format foto tidak didukung. Unggah file JPG, PNG, atau WEBP.' });
+      }
+      if (normalizedEvidenceUrl) {
+        return res.status(400).json({ message: 'Gunakan tautan bukti atau unggah foto, bukan keduanya.' });
+      }
+      normalizedEvidenceUrl = `data:${proofFile.mimetype};base64,${proofFile.buffer.toString('base64')}`;
     }
     if (typeof deliveryId !== 'string' || !deliveryId
       || !allowedTypes.includes(type)
       || !Number.isSafeInteger(returnedPortions) || returnedPortions < 1
-      || typeof note !== 'string' || note.trim().length < 10 || note.trim().length > 1000
-      || (evidenceUrl != null && (typeof evidenceUrl !== 'string' || evidenceUrl.length > 1000))) {
+      || typeof note !== 'string' || note.trim().length < 10 || note.trim().length > 1000) {
       return res.status(400).json({ message: 'Pengiriman, kategori, jumlah porsi, dan keterangan retur wajib diisi dengan benar.' });
     }
+    let evidenceBuffer = null;
+    let evidenceType = null;
+    if (evidence != null) {
+      if (typeof evidence !== 'object' || typeof evidence.mimeType !== 'string'
+        || typeof evidence.data !== 'string' || !RETURN_EVIDENCE_TYPES[evidence.mimeType]) {
+        return res.status(400).json({ message: 'Bukti harus berupa JPG, PNG, WebP, atau PDF.' });
+      }
+      const base64Match = evidence.data.match(/^data:([^;,]+);base64,([A-Za-z0-9+/]+={0,2})$/);
+      if (!base64Match || base64Match[1] !== evidence.mimeType) {
+        return res.status(400).json({ message: 'Format file bukti tidak valid.' });
+      }
+      const encodedFile = base64Match[2];
+      evidenceBuffer = Buffer.from(encodedFile, 'base64');
+      if (evidenceBuffer.length > MAX_RETURN_EVIDENCE_BYTES
+        || evidenceBuffer.toString('base64') !== encodedFile) {
+        return res.status(400).json({ message: 'Ukuran file bukti maksimal 5 MB dan harus berupa file yang valid.' });
+      }
+      evidenceType = RETURN_EVIDENCE_TYPES[evidence.mimeType];
+      if (!evidenceType.matches(evidenceBuffer)) {
+        return res.status(400).json({ message: 'Isi file tidak sesuai dengan jenis bukti yang dipilih.' });
+      }
+    }
+
     const delivery = await prisma.delivery.findFirst({
       where: { id: deliveryId, schoolId: req.schoolAccount.schoolId, status: 'COMPLETED' },
       select: { id: true, portions: true },
@@ -405,6 +631,15 @@ app.post('/api/school/returns', requireSchool, async (req, res, next) => {
     const existingClaim = await prisma.claim.findUnique({ where: { deliveryId } });
     if (existingClaim) return res.status(409).json({ message: 'Retur untuk pengiriman ini sudah pernah diajukan.' });
 
+    let storedEvidenceUrl = null;
+    if (evidenceBuffer && evidenceType) {
+      await fs.promises.mkdir(RETURN_EVIDENCE_DIRECTORY, { recursive: true });
+      const fileName = `${crypto.randomBytes(24).toString('hex')}.${evidenceType.extension}`;
+      storedEvidencePath = path.join(RETURN_EVIDENCE_DIRECTORY, fileName);
+      await fs.promises.writeFile(storedEvidencePath, evidenceBuffer, { flag: 'wx' });
+      storedEvidenceUrl = `/api/returns/evidence/${fileName}`;
+    }
+
     const claim = await prisma.claim.create({
       data: {
         deliveryId,
@@ -412,11 +647,23 @@ app.post('/api/school/returns', requireSchool, async (req, res, next) => {
         type,
         portions: returnedPortions,
         note: note.trim(),
-        evidenceUrl: normalizedEvidenceUrl,
+        evidenceUrl: storedEvidenceUrl,
       },
     });
-    res.status(201).json({ claim, message: 'Pengajuan retur berhasil dikirim ke admin SPPG.' });
-  } catch (error) {
+  app.post('/api/...', async (req, res, next) => {
+  try { // <--- Pastikan blok try ini ada di awal proses asynchronous
+    
+    // Contoh kode proses Anda (misal: simpan ke database, upload, dll)
+    // res.status(201).json({ claim, message: 'Pengajuan retur berhasil dikirim ke admin SPPG.' });
+
+  } catch (error) { // <--- Pasangan try di atas
+    if (storedEvidencePath) {
+      try {
+        await fs.promises.unlink(storedEvidencePath);
+      } catch (cleanupError) {
+        if (cleanupError.code !== 'ENOENT') console.error('Gagal membersihkan file bukti retur setelah pengajuan gagal:', cleanupError);
+      }
+    }
     if (error.code === 'P2002') {
       return res.status(409).json({ message: 'Retur untuk pengiriman ini sudah pernah diajukan.' });
     }
@@ -555,23 +802,21 @@ async function enqueueSchoolInvite(transaction, school, account) {
   });
 }
 
-function makeDriverInviteMessage(name, email, token) {
-  const activationUrl = new URL('/courier/activate', process.env.APP_URL || 'http://localhost:5173');
-  activationUrl.searchParams.set('token', token);
+function makeDriverInviteMessage(name, email) {
+  const loginUrl = new URL('/login', process.env.APP_URL || 'http://localhost:5173');
   const safeName = escapeHtml(name);
   const safeEmail = escapeHtml(email);
-  const safeActivationUrl = escapeHtml(activationUrl.toString());
+  const safeLoginUrl = escapeHtml(loginUrl.toString());
   return {
-    text: `Halo ${name}, akun kurir NutriTrack MBG telah disiapkan.\n\nEmail login: ${email}\n\nBuat kata sandi melalui tautan aktivasi berikut (berlaku 24 jam): ${activationUrl.toString()}`,
-    html: `<main style="max-width:560px;margin:32px auto;padding:28px;font-family:Arial,sans-serif;color:#29372e;border:1px solid #e6ece7;border-radius:12px"><p style="color:#39734a;font-weight:700">NUTRITRACK MBG</p><h1 style="font-size:22px">Aktivasi akun kurir</h1><p>Halo <strong>${safeName}</strong>, akun kurir Anda sudah disiapkan.</p><p><strong>Email login:</strong> ${safeEmail}</p><p style="margin:28px 0"><a href="${safeActivationUrl}" style="padding:12px 18px;border-radius:8px;color:#fff;background:#245a3e;text-decoration:none;font-weight:700">Buat kata sandi</a></p><p>Tautan berlaku selama 24 jam. Setelah aktivasi, Anda dapat masuk ke dashboard kurir.</p></main>`,
+    text: `Halo ${name}, akun kurir NutriTrack MBG telah disiapkan.\n\nEmail login: ${email}\nKata sandi awal: ${name}\n\nMasuk melalui ${loginUrl.toString()}, lalu segera ubah kata sandi awal melalui dashboard kurir.`,
+    html: `<main style="max-width:560px;margin:32px auto;padding:28px;font-family:Arial,sans-serif;color:#29372e;border:1px solid #e6ece7;border-radius:12px"><p style="color:#39734a;font-weight:700">NUTRITRACK MBG</p><h1 style="font-size:22px">Akses akun kurir</h1><p>Halo <strong>${safeName}</strong>, akun kurir Anda sudah disiapkan.</p><p><strong>Email login:</strong> ${safeEmail}<br><strong>Kata sandi awal:</strong> ${safeName}</p><p style="margin:28px 0"><a href="${safeLoginUrl}" style="padding:12px 18px;border-radius:8px;color:#fff;background:#245a3e;text-decoration:none;font-weight:700">Masuk ke dashboard kurir</a></p><p>Demi keamanan, segera ubah kata sandi awal dari dashboard kurir.</p></main>`,
   };
 }
 
 async function enqueueDriverInvite(transaction, driver, account) {
-  const token = crypto.randomBytes(32).toString('base64url');
   const invitation = await transaction.driverInvitation.create({
     data: {
-      tokenHash: crypto.createHash('sha256').update(token).digest('hex'),
+      tokenHash: crypto.createHash('sha256').update(crypto.randomBytes(32)).digest('hex'),
       expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
       driverId: driver.id,
       driverUserId: account.id,
@@ -580,8 +825,8 @@ async function enqueueDriverInvite(transaction, driver, account) {
   return transaction.emailOutbox.create({
     data: {
       recipient: account.email,
-      subject: 'Aktivasi akun kurir NutriTrack MBG',
-      encryptedPayload: encryptEmailPayload(makeDriverInviteMessage(driver.name, account.email, token)),
+      subject: 'Kredensial login kurir NutriTrack MBG',
+      encryptedPayload: encryptEmailPayload(makeDriverInviteMessage(driver.name, account.email)),
       driverInvitationId: invitation.id,
     },
   });
@@ -1014,9 +1259,12 @@ app.post('/api/admin/drivers', requireAdmin, async (req, res, next) => {
       return res.status(409).json({ message: 'Email tersebut sudah digunakan oleh akun lain.' });
     }
 
+    const passwordHash = await bcrypt.hash(name, 12);
     const result = await prisma.$transaction(async (transaction) => {
       const driver = await transaction.driver.create({ data: { name } });
-      const account = await transaction.driverUser.create({ data: { email, driverId: driver.id } });
+      const account = await transaction.driverUser.create({
+        data: { email, driverId: driver.id, passwordHash, isActive: false },
+      });
       const invitation = await enqueueDriverInvite(transaction, driver, account);
       return { driver, invitation };
     });
@@ -1034,13 +1282,121 @@ app.post('/api/admin/drivers', requireAdmin, async (req, res, next) => {
         invitationEmailStatus: invitation.status,
       },
       message: invitation.status === 'SENT'
-        ? 'Undangan aktivasi akun kurir telah dikirim melalui email.'
-        : 'Akun kurir sudah disiapkan. Undangan aktivasi tersimpan di antrean email sampai SMTP siap.',
+        ? 'Kredensial login kurir telah dikirim melalui email.'
+        : 'Akun kurir sudah disiapkan. Email kredensial menunggu konfigurasi SMTP.',
     });
   } catch (error) {
     if (error.code === 'P2002') {
       return res.status(409).json({ message: 'Email tersebut sudah digunakan oleh akun lain.' });
     }
+    next(error);
+  }
+});
+
+app.patch('/api/admin/drivers/:driverId', requireAdmin, async (req, res, next) => {
+  try {
+    const driverId = req.params.driverId;
+    const currentDriver = await prisma.driver.findUnique({
+      where: { id: driverId },
+      include: { account: true },
+    });
+    if (!currentDriver) return res.status(404).json({ message: 'Kurir tidak ditemukan.' });
+
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    if (!name || name.length > 160 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ message: 'Nama kurir dan alamat email yang valid wajib diisi.' });
+    }
+
+    const [existingDriverAccount, existingSchoolAccount, existingSchool, existingAdmin] = await Promise.all([
+      prisma.driverUser.findUnique({ where: { email }, select: { id: true } }),
+      prisma.schoolUser.findUnique({ where: { email }, select: { id: true } }),
+      prisma.school.findFirst({ where: { email }, select: { id: true } }),
+      prisma.adminUser.findFirst({ where: { email }, select: { id: true } }),
+    ]);
+    if ((existingDriverAccount && existingDriverAccount.id !== currentDriver.account?.id)
+      || existingSchoolAccount || existingSchool || existingAdmin) {
+      return res.status(409).json({ message: 'Email tersebut sudah digunakan oleh akun lain.' });
+    }
+
+    const emailChanged = currentDriver.account?.email !== email;
+    const needsInvitation = !currentDriver.account
+      || emailChanged
+      || (!currentDriver.account.isActive && currentDriver.name !== name);
+    const initialPasswordHash = needsInvitation ? await bcrypt.hash(name, 12) : null;
+    const result = await prisma.$transaction(async (transaction) => {
+      await transaction.driver.update({
+        where: { id: driverId },
+        data: { name },
+      });
+
+      let account = currentDriver.account;
+      if (!account) {
+        account = await transaction.driverUser.create({
+          data: { email, driverId, passwordHash: initialPasswordHash, isActive: false },
+        });
+      } else if (needsInvitation) {
+        account = await transaction.driverUser.update({
+          where: { id: account.id },
+          data: { email, passwordHash: initialPasswordHash, isActive: false },
+        });
+        await transaction.driverInvitation.updateMany({
+          where: { driverUserId: account.id, acceptedAt: null },
+          data: { expiresAt: new Date() },
+        });
+        await transaction.emailOutbox.updateMany({
+          where: { driverInvitation: { driverUserId: account.id }, status: 'PENDING' },
+          data: { status: 'FAILED', lastError: 'Data kurir berubah. Undangan lama diganti.' },
+        });
+      }
+
+      const invitation = needsInvitation
+        ? await enqueueDriverInvite(transaction, { id: driverId, name }, account)
+        : null;
+      return { driver: { id: driverId, name, email: account.email, isActive: account.isActive }, invitation };
+    });
+
+    if (result.invitation) await dispatchPendingEmails();
+    const invitation = result.invitation
+      ? await prisma.emailOutbox.findUnique({ where: { id: result.invitation.id }, select: { status: true } })
+      : null;
+    res.json({
+      driver: {
+        ...result.driver,
+        accountStatus: result.driver.isActive ? 'ACTIVE' : 'PENDING',
+        invitationEmailStatus: invitation?.status || null,
+      },
+      message: !needsInvitation
+        ? 'Data kurir berhasil diperbarui.'
+        : invitation?.status === 'SENT'
+          ? 'Data kurir diperbarui dan kredensial login baru dikirim ke email.'
+          : 'Data kurir diperbarui. Email kredensial baru menunggu di antrean email.',
+    });
+  } catch (error) {
+    if (error.code === 'P2002') {
+      return res.status(409).json({ message: 'Email tersebut sudah digunakan oleh akun lain.' });
+    }
+    next(error);
+  }
+});
+
+app.delete('/api/admin/drivers/:driverId', requireAdmin, async (req, res, next) => {
+  try {
+    const driver = await prisma.driver.findUnique({
+      where: { id: req.params.driverId },
+      select: { id: true, name: true },
+    });
+    if (!driver) return res.status(404).json({ message: 'Kurir tidak ditemukan.' });
+
+    await prisma.$transaction(async (transaction) => {
+      await transaction.delivery.updateMany({
+        where: { driverId: driver.id },
+        data: { driverId: null },
+      });
+      await transaction.driver.delete({ where: { id: driver.id } });
+    });
+    res.json({ message: `Kurir ${driver.name} dihapus. Riwayat pengiriman dipertahankan tanpa penugasan kurir.` });
+  } catch (error) {
     next(error);
   }
 });
@@ -1054,7 +1410,12 @@ app.post('/api/admin/drivers/:driverId/invite', requireAdmin, async (req, res, n
     if (!driver?.account) return res.status(404).json({ message: 'Akun kurir tidak ditemukan.' });
     if (driver.account.isActive) return res.status(409).json({ message: 'Akun kurir ini sudah aktif.' });
 
+    const initialPasswordHash = await bcrypt.hash(driver.name, 12);
     const outbox = await prisma.$transaction(async (transaction) => {
+      await transaction.driverUser.update({
+        where: { id: driver.account.id },
+        data: { passwordHash: initialPasswordHash, isActive: false },
+      });
       await transaction.driverInvitation.updateMany({
         where: { driverUserId: driver.account.id, acceptedAt: null },
         data: { expiresAt: new Date() },
@@ -1072,8 +1433,153 @@ app.post('/api/admin/drivers/:driverId/invite', requireAdmin, async (req, res, n
     });
     res.json({
       message: invitation.status === 'SENT'
-        ? 'Undangan aktivasi akun kurir telah dikirim ulang.'
-        : 'Undangan belum terkirim; email tersimpan di antrean sampai SMTP siap.',
+        ? 'Kredensial login kurir telah dikirim ulang.'
+        : 'Email kredensial belum terkirim; pesan tersimpan di antrean sampai SMTP siap.',
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/admin/assignments', requireAdmin, async (req, res, next) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const [schools, drivers, deliveries] = await Promise.all([
+      prisma.school.findMany({
+        where: { isActive: true },
+        select: { id: true, name: true, targetPupils: true },
+        orderBy: { name: 'asc' },
+      }),
+      prisma.driver.findMany({
+        where: { isActive: true, account: { isNot: null } },
+        select: {
+          id: true,
+          name: true,
+          account: { select: { email: true, isActive: true } },
+        },
+        orderBy: { name: 'asc' },
+      }),
+      prisma.delivery.findMany({
+        where: { date: { gte: today }, status: { not: 'COMPLETED' } },
+        include: {
+          school: { select: { name: true, address: true } },
+          driver: {
+            select: {
+              name: true,
+              account: { select: { isActive: true } },
+            },
+          },
+        },
+        orderBy: [{ date: 'asc' }, { school: { name: 'asc' } }],
+      }),
+    ]);
+
+    res.json({
+      schools,
+      drivers: drivers.map((driver) => ({
+        id: driver.id,
+        name: driver.name,
+        email: driver.account.email,
+        accountStatus: driver.account.isActive ? 'ACTIVE' : 'PENDING',
+      })),
+      assignments: deliveries.map((delivery) => ({
+        id: delivery.id,
+        date: delivery.date,
+        portions: delivery.portions,
+        status: delivery.status,
+        statusLabel: {
+          PREPARING: 'Persiapan',
+          IN_TRANSIT: 'Dalam perjalanan',
+          ALERT: 'Perlu perhatian',
+        }[delivery.status] || delivery.status,
+        school: delivery.school.name,
+        address: delivery.school.address,
+        driverId: delivery.driverId,
+        driver: delivery.driver?.name || null,
+        driverAccountStatus: delivery.driver
+          ? delivery.driver.account?.isActive ? 'ACTIVE' : 'PENDING'
+          : null,
+      })),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/admin/assignments', requireAdmin, async (req, res, next) => {
+  try {
+    const { schoolId, driverId, date } = req.body || {};
+    if (typeof schoolId !== 'string' || !schoolId
+      || typeof driverId !== 'string' || !driverId
+      || typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({ message: 'Sekolah, kurir, dan tanggal distribusi wajib dipilih.' });
+    }
+
+    const [year, month, day] = date.split('-').map(Number);
+    const deliveryDate = new Date(year, month - 1, day);
+    if (deliveryDate.getFullYear() !== year || deliveryDate.getMonth() !== month - 1
+      || deliveryDate.getDate() !== day) {
+      return res.status(400).json({ message: 'Tanggal distribusi tidak valid.' });
+    }
+    deliveryDate.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (deliveryDate < today) {
+      return res.status(400).json({ message: 'Tanggal distribusi tidak boleh sebelum hari ini.' });
+    }
+
+    const [school, driver] = await Promise.all([
+      prisma.school.findUnique({
+        where: { id: schoolId },
+        select: { id: true, name: true, targetPupils: true, isActive: true },
+      }),
+      prisma.driver.findUnique({
+        where: { id: driverId },
+        include: { account: { select: { email: true } } },
+      }),
+    ]);
+    if (!school?.isActive) return res.status(404).json({ message: 'Sekolah aktif tidak ditemukan.' });
+    if (!driver?.isActive || !driver.account) {
+      return res.status(404).json({ message: 'Akun kurir aktif tidak ditemukan.' });
+    }
+
+    const existingDelivery = await prisma.delivery.findUnique({
+      where: { date_schoolId: { date: deliveryDate, schoolId } },
+      select: { id: true, status: true },
+    });
+    if (existingDelivery?.status === 'COMPLETED') {
+      return res.status(409).json({ message: 'Pengiriman sekolah ini sudah selesai dan tidak dapat ditugaskan ulang.' });
+    }
+    if (!existingDelivery && school.targetPupils < 1) {
+      return res.status(400).json({ message: 'Target porsi sekolah belum diatur. Perbarui data sekolah sebelum membuat jadwal.' });
+    }
+
+    const delivery = await prisma.delivery.upsert({
+      where: { date_schoolId: { date: deliveryDate, schoolId } },
+      update: { driverId },
+      create: {
+        date: deliveryDate,
+        portions: school.targetPupils,
+        status: 'PREPARING',
+        statusNote: 'Penugasan kurir dibuat oleh admin.',
+        schoolId,
+        driverId,
+      },
+      include: { school: { select: { name: true } } },
+    });
+
+    res.status(existingDelivery ? 200 : 201).json({
+      assignment: {
+        id: delivery.id,
+        school: delivery.school.name,
+        driver: driver.name,
+        date: delivery.date,
+        portions: delivery.portions,
+      },
+      message: existingDelivery
+        ? `Kurir ${driver.name} ditugaskan ke ${school.name}.`
+        : `Jadwal pengiriman ${school.name} dibuat dan kurir ${driver.name} ditugaskan.`,
     });
   } catch (error) {
     next(error);
@@ -1085,10 +1591,10 @@ app.patch('/api/admin/deliveries/:deliveryId/driver', requireAdmin, async (req, 
     const driverId = typeof req.body?.driverId === 'string' && req.body.driverId ? req.body.driverId : null;
     if (driverId) {
       const driver = await prisma.driver.findFirst({
-        where: { id: driverId, isActive: true, account: { is: { isActive: true } } },
+        where: { id: driverId, isActive: true, account: { isNot: null } },
         select: { id: true },
       });
-      if (!driver) return res.status(404).json({ message: 'Kurir aktif tidak ditemukan.' });
+      if (!driver) return res.status(404).json({ message: 'Akun kurir aktif tidak ditemukan.' });
     }
     const result = await prisma.delivery.updateMany({
       where: { id: req.params.deliveryId },
@@ -1164,6 +1670,7 @@ app.get('/api/courier/dashboard', requireDriver, async (req, res, next) => {
         statusNote: delivery.statusNote,
         departureTime: delivery.departureTime,
         receivedAt: delivery.receivedAt,
+        qcStatus: delivery.qcStatus,
         school: delivery.school.name,
         address: delivery.school.address,
       })),
@@ -1176,7 +1683,7 @@ app.get('/api/courier/dashboard', requireDriver, async (req, res, next) => {
 app.patch('/api/courier/deliveries/:deliveryId', requireDriver, async (req, res, next) => {
   try {
     const { status, note } = req.body || {};
-    if (!['IN_TRANSIT', 'COMPLETED', 'ALERT'].includes(status)
+    if (!['IN_TRANSIT', 'ALERT'].includes(status)
       || (note != null && (typeof note !== 'string' || note.trim().length > 500))
       || (status === 'ALERT' && (!note || note.trim().length < 5))) {
       return res.status(400).json({ message: 'Status atau catatan pembaruan pengiriman tidak valid.' });
@@ -1187,8 +1694,8 @@ app.patch('/api/courier/deliveries/:deliveryId', requireDriver, async (req, res,
     });
     if (!delivery) return res.status(404).json({ message: 'Pengiriman yang ditugaskan kepada Anda tidak ditemukan.' });
     const allowedTransition = (delivery.status === 'PREPARING' && status === 'IN_TRANSIT')
-      || (delivery.status === 'IN_TRANSIT' && ['COMPLETED', 'ALERT'].includes(status))
-      || (delivery.status === 'ALERT' && ['IN_TRANSIT', 'COMPLETED'].includes(status));
+      || (delivery.status === 'IN_TRANSIT' && status === 'ALERT')
+      || (delivery.status === 'ALERT' && status === 'IN_TRANSIT');
     if (!allowedTransition) {
       return res.status(409).json({ message: 'Perubahan status ini tidak sesuai dengan tahapan pengiriman saat ini.' });
     }
@@ -1197,12 +1704,9 @@ app.patch('/api/courier/deliveries/:deliveryId', requireDriver, async (req, res,
       status,
       statusNote: typeof note === 'string' && note.trim()
         ? note.trim()
-        : status === 'COMPLETED' ? 'Pengiriman diterima sekolah' : 'Kurir dalam perjalanan',
+        : status === 'ALERT' ? note.trim() : 'Kurir dalam perjalanan',
       ...(status === 'IN_TRANSIT' && {
         departureTime: now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' }),
-      }),
-      ...(status === 'COMPLETED' && {
-        receivedAt: now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' }),
       }),
     };
     const result = await prisma.delivery.updateMany({
@@ -1213,6 +1717,49 @@ app.patch('/api/courier/deliveries/:deliveryId', requireDriver, async (req, res,
       return res.status(409).json({ message: 'Status pengiriman berubah. Muat ulang daftar sebelum mencoba lagi.' });
     }
     res.json({ message: 'Pembaruan status pengiriman berhasil disimpan.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/courier/deliveries/:deliveryId/handover', requireDriver, async (req, res, next) => {
+  try {
+    const { pin } = req.body || {};
+    if (typeof pin !== 'string' || !/^\d{4}$/.test(pin)) {
+      return res.status(400).json({ message: 'Masukkan PIN serah terima yang terdiri dari 4 digit.' });
+    }
+    const delivery = await prisma.delivery.findFirst({
+      where: { id: req.params.deliveryId, driverId: req.driverAccount.driverId },
+      select: { id: true, status: true, qcStatus: true, handoverPin: true },
+    });
+    if (!delivery) return res.status(404).json({ message: 'Pengiriman yang ditugaskan kepada Anda tidak ditemukan.' });
+    if (delivery.status !== 'IN_TRANSIT' || delivery.qcStatus !== 'QC_APPROVED' || !delivery.handoverPin) {
+      return res.status(409).json({ message: 'Sekolah harus menyetujui QC sebelum serah terima dapat diselesaikan.' });
+    }
+    if (delivery.handoverPin !== pin) {
+      return res.status(400).json({ message: 'PIN serah terima tidak sesuai.' });
+    }
+
+    const now = new Date();
+    const result = await prisma.delivery.updateMany({
+      where: {
+        id: delivery.id,
+        driverId: req.driverAccount.driverId,
+        status: 'IN_TRANSIT',
+        qcStatus: 'QC_APPROVED',
+        handoverPin: pin,
+      },
+      data: {
+        status: 'COMPLETED',
+        statusNote: 'Pengiriman diterima sekolah setelah verifikasi PIN.',
+        receivedAt: now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' }),
+        handoverPin: null,
+      },
+    });
+    if (result.count !== 1) {
+      return res.status(409).json({ message: 'Status serah terima berubah. Muat ulang daftar pengiriman.' });
+    }
+    res.json({ message: 'Serah terima berhasil dikonfirmasi dan pengiriman selesai.' });
   } catch (error) {
     next(error);
   }
@@ -1500,6 +2047,7 @@ app.get('/api/admin/dashboard', requireAdmin, async (req, res, next) => {
         portions: delivery.portions,
         departureTime: delivery.departureTime,
         status: delivery.status,
+        qcStatus: delivery.qcStatus,
         statusNote: delivery.statusNote,
         receivedAt: delivery.receivedAt,
       })),
@@ -1534,6 +2082,22 @@ app.get('/api/admin/dashboard', requireAdmin, async (req, res, next) => {
 app.use((error, req, res, next) => {
   console.error('API error:', error);
   if (res.headersSent) return next(error);
+
+  if (error.type === 'entity.too.large') {
+    return res.status(413).json({
+      message: req.path === '/api/school/returns'
+        ? 'Ukuran file bukti maksimal 5 MB.'
+        : 'Ukuran permintaan terlalu besar.',
+    });
+
+  if (error instanceof multer.MulterError) {
+    const status = error.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+    const message = error.code === 'LIMIT_FILE_SIZE'
+      ? 'Ukuran foto terlalu besar. Maksimal 2MB.'
+      : 'Foto bukti tidak dapat diproses. Periksa jumlah berkas dan data pengajuan.';
+    return res.status(status).json({ message });
+
+  }
   res.status(500).json({ message: 'Terjadi kesalahan pada server. Silakan coba kembali.' });
 });
 

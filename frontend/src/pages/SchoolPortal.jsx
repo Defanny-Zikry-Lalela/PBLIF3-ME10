@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
+<<<<<<< HEAD
 import { ArrowRight, Bell, CalendarDays, Check, CircleHelp, Clock3, ExternalLink, KeyRound, LockKeyhole, LogOut, PackageCheck, Send, ShieldCheck, Truck, X } from 'lucide-react'
+import { Link } from 'react-router-dom'
+=======
+import { ArrowRight, Bell, CalendarDays, Check, CircleHelp, Clock3, ShieldCheck, Truck } from 'lucide-react'
+>>>>>>> c5f4a66e2349d5308c5323c5a6e344366abc9926
 import { apiRequest } from '../lib/api.js'
-import useBodyScrollLock from '../hooks/useBodyScrollLock.js'
+import SchoolNavbar from '../components/SchoolNavbar.jsx'
 
-function SchoolPortal({ school, onLogout }) {
-  return <SchoolDashboard school={school} onLogout={onLogout} />
+function SchoolPortal({ school, onLogout, view = 'dashboard' }) {
+  return <SchoolDashboard school={school} onLogout={onLogout} view={view} />
 }
 
 const DELIVERY_LABELS = {
@@ -14,10 +19,26 @@ const DELIVERY_LABELS = {
   ALERT: 'Perlu konfirmasi admin',
 }
 
-function SchoolDashboard({ school, onLogout }) {
+const MAX_RETURN_EVIDENCE_BYTES = 5 * 1024 * 1024
+const RETURN_EVIDENCE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') resolve(reader.result)
+      else reject(new Error('File bukti gagal dibaca. Silakan pilih ulang file tersebut.'))
+    }
+    reader.onerror = () => reject(reader.error || new Error('File bukti gagal dibaca.'))
+    reader.readAsDataURL(file)
+  })
+}
+
+function SchoolDashboard({ school, onLogout, view }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
+<<<<<<< HEAD
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false)
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
@@ -27,12 +48,16 @@ function SchoolDashboard({ school, onLogout }) {
   const [savingPassword, setSavingPassword] = useState(false)
   const [eligibleDeliveries, setEligibleDeliveries] = useState([])
   const [returnRequests, setReturnRequests] = useState([])
-  const [returnForm, setReturnForm] = useState({ deliveryId: '', type: '', portions: '', note: '', evidenceUrl: '' })
+  const [returnForm, setReturnForm] = useState({ deliveryId: '', type: '', portions: '', note: '' })
+  const [evidenceFile, setEvidenceFile] = useState(null)
+  const [evidenceInputKey, setEvidenceInputKey] = useState(0)
   const [returnError, setReturnError] = useState('')
   const [returnNotice, setReturnNotice] = useState('')
   const [savingReturn, setSavingReturn] = useState(false)
 
   useBodyScrollLock(passwordDialogOpen)
+=======
+>>>>>>> c5f4a66e2349d5308c5323c5a6e344366abc9926
 
   const loadDashboard = useCallback(async () => {
     setError('')
@@ -46,20 +71,11 @@ function SchoolDashboard({ school, onLogout }) {
     }
   }, [])
 
-  const loadReturns = useCallback(async () => {
-    try {
-      const result = await apiRequest('/api/school/returns', { tokenType: 'school' })
-      setEligibleDeliveries(result.eligibleDeliveries)
-      setReturnRequests(result.returns)
-    } catch (requestError) {
-      setReturnError(requestError.message || 'Data pengajuan retur gagal dimuat.')
-    }
-  }, [])
-
   useEffect(() => {
-    loadDashboard()
-    loadReturns()
-  }, [loadDashboard, loadReturns])
+<<<<<<< HEAD
+    if (view === 'dashboard') loadDashboard()
+    else loadReturns()
+  }, [view, loadDashboard, loadReturns])
 
   async function changePassword(event) {
     event.preventDefault()
@@ -94,13 +110,18 @@ function SchoolDashboard({ school, onLogout }) {
     setReturnNotice('')
     setSavingReturn(true)
     try {
+      const evidence = evidenceFile
+        ? { mimeType: evidenceFile.type, data: await readFileAsDataUrl(evidenceFile) }
+        : null
       const result = await apiRequest('/api/school/returns', {
         method: 'POST',
         tokenType: 'school',
-        body: JSON.stringify(returnForm),
+        body: JSON.stringify({ ...returnForm, evidence }),
       })
       setReturnNotice(result.message)
-      setReturnForm({ deliveryId: '', type: '', portions: '', note: '', evidenceUrl: '' })
+      setReturnForm({ deliveryId: '', type: '', portions: '', note: '' })
+      setEvidenceFile(null)
+      setEvidenceInputKey((key) => key + 1)
       await loadReturns()
     } catch (requestError) {
       setReturnError(requestError.message || 'Pengajuan retur gagal dikirim.')
@@ -108,6 +129,12 @@ function SchoolDashboard({ school, onLogout }) {
       setSavingReturn(false)
     }
   }
+=======
+    loadDashboard()
+    const timer = window.setInterval(loadDashboard, 10_000)
+    return () => window.clearInterval(timer)
+  }, [loadDashboard])
+>>>>>>> c5f4a66e2349d5308c5323c5a6e344366abc9926
 
   const delivery = data?.delivery
   const dateLabel = new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date())
@@ -116,6 +143,7 @@ function SchoolDashboard({ school, onLogout }) {
   const deliveryStatus = delivery ? DELIVERY_LABELS[delivery.status] || delivery.status : 'Belum dijadwalkan'
 
   return (
+<<<<<<< HEAD
     <div className="school-portal-shell">
       <header className="school-portal-topbar">
         <a className="school-portal-brand" href="/school/dashboard">
@@ -123,9 +151,9 @@ function SchoolDashboard({ school, onLogout }) {
           <span><strong>NutriTrack <b>MBG</b></strong><small>SEKOLAH <i>·</i> {school.name}</small></span>
         </a>
         <nav className="school-portal-nav" aria-label="Navigasi sekolah">
-          <span className="school-portal-nav-active">Dashboard</span>
+          <Link className={view === 'dashboard' ? 'school-portal-nav-active' : ''} aria-current={view === 'dashboard' ? 'page' : undefined} to="/school/dashboard">Dashboard</Link>
           <span aria-disabled="true" title="Fitur QC dan penerimaan akan hadir berikutnya">QC &amp; Penerimaan</span>
-          <a className="school-portal-return-link" href="#school-returns">Pengajuan Retur</a>
+          <Link className={`school-portal-return-link${view === 'returns' ? ' school-portal-nav-active' : ''}`} aria-current={view === 'returns' ? 'page' : undefined} to="/school/returns">Pengajuan Retur</Link>
         </nav>
         <div className="school-portal-profile">
           <span className="school-user-avatar">{school.name.trim().charAt(0).toUpperCase()}</span>
@@ -137,6 +165,24 @@ function SchoolDashboard({ school, onLogout }) {
 
       <main className="school-portal-content">
         {passwordNotice && <div className="inline-notice success-notice" role="status"><Check size={16} />{passwordNotice}</div>}
+        {view === 'returns' ? (
+          <div className="school-portal-heading">
+            <div>
+              <p className="breadcrumb">Sekolah <span>/</span> Pengajuan retur</p>
+              <p className="eyebrow"><span className="eyebrow-line" /> Tindak lanjut penerimaan MBG</p>
+              <h1>Pengajuan retur</h1>
+              <p className="page-description">Ajukan retur porsi dari pengiriman selesai dan pantau status tinjauan admin SPPG.</p>
+            </div>
+            <Link className="button-secondary" to="/school/dashboard"><PackageCheck size={14} /> Kembali ke dashboard</Link>
+          </div>
+        ) : (
+          <>
+=======
+    <div className="school-portal-shell school-portal-shell-dashboard">
+      <SchoolNavbar school={school} activePage="dashboard" onLogout={onLogout} />
+
+      <main className="school-portal-content">
+>>>>>>> c5f4a66e2349d5308c5323c5a6e344366abc9926
         <div className="school-portal-heading">
           <div>
             <p className="breadcrumb">Sekolah <span>/</span> Dashboard</p>
@@ -182,7 +228,11 @@ function SchoolDashboard({ school, onLogout }) {
                 </dl>
 
                 {data.menu?.ingredients?.length > 0 && <p className="school-menu-ingredients">Menu hari ini: {data.menu.ingredients.join(', ')}</p>}
-                <div className="school-qc-hint"><ShieldCheck size={16} /><div><strong>Periksa kondisi saat penerimaan</strong><p>Jika ada porsi atau kondisi makanan yang perlu ditindaklanjuti, ajukan retur melalui formulir di bawah ini.</p></div></div>
+<<<<<<< HEAD
+                <div className="school-qc-hint"><ShieldCheck size={16} /><div><strong>Periksa kondisi saat penerimaan</strong><p>Jika ada porsi atau kondisi makanan yang perlu ditindaklanjuti, <Link to="/school/returns">ajukan retur melalui halaman Pengajuan Retur</Link>.</p></div></div>
+=======
+                <div className="school-qc-hint"><ShieldCheck size={16} /><div><strong>Periksa kondisi saat penerimaan</strong><p>Jika ada porsi atau kondisi makanan yang perlu ditindaklanjuti, ajukan retur melalui menu Pengajuan Retur.</p></div></div>
+>>>>>>> c5f4a66e2349d5308c5323c5a6e344366abc9926
               </>
             ) : (
               <div className="school-empty-delivery">
@@ -208,7 +258,11 @@ function SchoolDashboard({ school, onLogout }) {
             {data?.updatedAt && <p className="school-data-updated"><Clock3 size={12} /> Data diperbarui {new Intl.DateTimeFormat('id-ID', { hour: '2-digit', minute: '2-digit' }).format(new Date(data.updatedAt))}</p>}
           </aside>
         </div>
-        <section className="panel school-returns-panel" id="school-returns">
+<<<<<<< HEAD
+          </>
+        )}
+        {view === 'returns' && (
+        <section className="panel school-returns-panel">
           <div className="panel-heading">
             <div><h2>Pengajuan retur MBG</h2><p>Ajukan retur porsi dari pengiriman selesai untuk ditinjau admin SPPG.</p></div>
           </div>
@@ -232,8 +286,33 @@ function SchoolDashboard({ school, onLogout }) {
             <input className="management-input" id="return-portions" type="number" min="1" max={eligibleDeliveries.find((item) => item.id === returnForm.deliveryId)?.portions || 100000} required value={returnForm.portions} onChange={(event) => setReturnForm({ ...returnForm, portions: event.target.value })} />
             <label className="form-label" htmlFor="return-note">Keterangan</label>
             <textarea className="management-input school-address-input" id="return-note" rows="3" minLength="10" maxLength="1000" required placeholder="Jelaskan kondisi retur dan tindak lanjut yang dibutuhkan" value={returnForm.note} onChange={(event) => setReturnForm({ ...returnForm, note: event.target.value })} />
-            <label className="form-label" htmlFor="return-evidence">Tautan bukti <span className="optional-label">Opsional</span></label>
-            <input className="management-input" id="return-evidence" type="url" maxLength="1000" placeholder="https://..." value={returnForm.evidenceUrl} onChange={(event) => setReturnForm({ ...returnForm, evidenceUrl: event.target.value })} />
+            <label className="form-label" htmlFor="return-evidence">File bukti <span className="optional-label">Opsional · maksimal 5 MB</span></label>
+            <input
+              key={evidenceInputKey}
+              className="management-input return-evidence-input"
+              id="return-evidence"
+              type="file"
+              accept="image/jpeg,image/png,image/webp,application/pdf"
+              onChange={(event) => {
+                const file = event.target.files?.[0] || null
+                setReturnError('')
+                if (file && file.size > MAX_RETURN_EVIDENCE_BYTES) {
+                  setEvidenceFile(null)
+                  setEvidenceInputKey((key) => key + 1)
+                  setReturnError('Ukuran file bukti maksimal 5 MB.')
+                  return
+                }
+                if (file && !RETURN_EVIDENCE_TYPES.includes(file.type)) {
+                  setEvidenceFile(null)
+                  setEvidenceInputKey((key) => key + 1)
+                  setReturnError('Pilih file JPG, PNG, WebP, atau PDF.')
+                  return
+                }
+                setEvidenceFile(file)
+              }}
+            />
+            <p className="school-form-help"><CircleHelp size={13} /> Format yang didukung: JPG, PNG, WebP, atau PDF.</p>
+            {evidenceFile && <p className="return-evidence-selected" role="status">{evidenceFile.name} · {(evidenceFile.size / (1024 * 1024)).toFixed(2)} MB</p>}
             <button className="button-primary" type="submit" disabled={savingReturn || !eligibleDeliveries.length}>
               {savingReturn ? 'Mengirim pengajuan...' : <><Send size={15} /> Kirim pengajuan retur</>}
             </button>
@@ -250,29 +329,11 @@ function SchoolDashboard({ school, onLogout }) {
             )) : <p className="school-return-empty">Belum ada pengajuan retur.</p>}
           </div>
         </section>
+        )}
+=======
+>>>>>>> c5f4a66e2349d5308c5323c5a6e344366abc9926
         <footer className="school-portal-footer">NutriTrack MBG <span>·</span> Program Makanan Bergizi Gratis</footer>
       </main>
-      {passwordDialogOpen && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPasswordDialogOpen(false) }}>
-          <section className="detail-modal school-password-modal" role="dialog" aria-modal="true" aria-labelledby="school-password-title">
-            <div className="modal-heading">
-              <div><p className="eyebrow">Keamanan akun sekolah</p><h2 id="school-password-title">Ubah password</h2></div>
-              <button className="icon-button" type="button" aria-label="Tutup ubah password" onClick={() => setPasswordDialogOpen(false)}><X size={19} /></button>
-            </div>
-            <p className="school-modal-description">Gunakan password baru minimal 12 karakter dan jangan gunakan nama sekolah sebagai password.</p>
-            {passwordError && <div className="inline-notice error-notice" role="alert">{passwordError}</div>}
-            <form className="school-form" onSubmit={changePassword}>
-              <label className="form-label" htmlFor="school-current-password">Password saat ini</label>
-              <input className="management-input" id="school-current-password" type="password" autoComplete="current-password" required value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
-              <label className="form-label" htmlFor="school-new-password">Password baru</label>
-              <input className="management-input" id="school-new-password" type="password" autoComplete="new-password" minLength={12} maxLength={128} required value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
-              <label className="form-label" htmlFor="school-confirm-password">Ulangi password baru</label>
-              <input className="management-input" id="school-confirm-password" type="password" autoComplete="new-password" minLength={12} maxLength={128} required value={passwordConfirmation} onChange={(event) => setPasswordConfirmation(event.target.value)} />
-              <button className="button-primary activation-submit" type="submit" disabled={savingPassword}>{savingPassword ? 'Menyimpan...' : <>Simpan password <LockKeyhole size={15} /></>}</button>
-            </form>
-          </section>
-        </div>
-      )}
     </div>
   )
 }

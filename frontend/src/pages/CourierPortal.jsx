@@ -101,11 +101,6 @@ function CourierPortal({ driver, onLogout }) {
                   {savingId === delivery.id ? <LoaderCircle size={15} className="refresh-spinning" /> : <Truck size={15} />} Tandai berangkat
                 </button>
               )}
-              {delivery.status === 'IN_TRANSIT' && (
-                <button className="button-primary" type="button" disabled={savingId === delivery.id} onClick={() => updateDelivery(delivery, 'COMPLETED')}>
-                  {savingId === delivery.id ? <LoaderCircle size={15} className="refresh-spinning" /> : <Check size={15} />} Konfirmasi diterima sekolah
-                </button>
-              )}
               {delivery.status === 'ALERT' && (
                 <button className="button-primary" type="button" disabled={savingId === delivery.id} onClick={() => updateDelivery(delivery, 'IN_TRANSIT')}>
                   {savingId === delivery.id ? <LoaderCircle size={15} className="refresh-spinning" /> : <Truck size={15} />} Lanjutkan perjalanan
