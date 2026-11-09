@@ -58,10 +58,15 @@ function SchoolNavbar({ school, activePage, onLogout }) {
             <span><strong>NutriTrack <b>MBG</b></strong><small>SEKOLAH <i>·</i> {school.name}</small></span>
           </Link>
           <nav className="school-portal-nav" aria-label="Navigasi sekolah">
-            {NAV_ITEMS.map((item) => item.id === activePage ? (
-              <span className="school-portal-nav-active" aria-current="page" key={item.id}>{item.label}</span>
-            ) : (
-              <Link to={item.to} key={item.id}>{item.label}</Link>
+            {NAV_ITEMS.map((item) => (
+              <Link
+                className={item.id === activePage ? 'school-portal-nav-active' : undefined}
+                to={item.to}
+                aria-current={item.id === activePage ? 'page' : undefined}
+                key={item.id}
+              >
+                {item.label}
+              </Link>
             ))}
           </nav>
           <div className="school-portal-profile">

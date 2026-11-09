@@ -57,14 +57,16 @@ function CourierPortal({ driver, onLogout }) {
   return (
     <div className="courier-portal-shell">
       <header className="school-portal-topbar courier-topbar">
-        <a className="school-portal-brand" href="/courier/dashboard">
-          <span><PackageCheck size={19} /></span>
-          <span><strong>NutriTrack <b>MBG</b></strong><small>PORTAL KURIR</small></span>
-        </a>
-        <div className="courier-profile">
-          <span className="school-user-avatar">{driver.name.trim().charAt(0).toUpperCase()}</span>
-          <span><strong>{driver.name}</strong><small>Kurir MBG</small></span>
-          <button type="button" onClick={onLogout}><LogOut size={14} /> Keluar</button>
+        <div className="courier-topbar-inner">
+          <a className="school-portal-brand" href="/courier/dashboard">
+            <span><PackageCheck size={19} /></span>
+            <span><strong>NutriTrack <b>MBG</b></strong><small>PORTAL KURIR</small></span>
+          </a>
+          <div className="courier-profile">
+            <span className="school-user-avatar">{driver.name.trim().charAt(0).toUpperCase()}</span>
+            <span><strong>{driver.name}</strong><small>Kurir MBG</small></span>
+            <button type="button" onClick={onLogout}><LogOut size={14} /> Keluar</button>
+          </div>
         </div>
       </header>
       <main className="courier-content">
