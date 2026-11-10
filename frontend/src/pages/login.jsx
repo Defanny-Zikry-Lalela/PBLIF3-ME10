@@ -142,7 +142,7 @@ function Login({ onAdminLogin, onSchoolLogin, onDriverLogin }) {
             </button>
 
             <div className="login-help">
-              <p>Sistem mengenali akun admin, sekolah, atau kurir secara otomatis.</p>
+              <p>Admin dapat menggunakan email atau username. Sekolah dan kurir masuk dengan email terdaftar. Password awal sekolah mengikuti nama sekolah dan dapat diubah dari profil setelah login.</p>
             </div>
           </form>
           <p className="login-copyright">© {new Date().getFullYear()} NutriTrack MBG <span>·</span> Program Makanan Bergizi Gratis</p>

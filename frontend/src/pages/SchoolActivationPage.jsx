@@ -46,7 +46,7 @@ function SchoolActivationPage() {
             <span className="activation-success-icon"><Check size={24} /></span>
             <p className="login-overline">Password berhasil dibuat</p>
             <h1>Kata sandi berhasil dibuat</h1>
-            <p>Kata sandi tersimpan. Status akun akan aktif setelah sekolah berhasil masuk pertama kali.</p>
+            <p>Kata sandi yang Anda buat tersimpan. Masuk menggunakan email sekolah dan kata sandi tersebut; Anda dapat mengubahnya lagi dari profil sekolah.</p>
             <Link to="/school/login" className="activation-back-link">Masuk ke portal sekolah <ArrowRight size={15} /></Link>
           </div>
         ) : (
@@ -54,7 +54,7 @@ function SchoolActivationPage() {
             <span className="activation-icon"><LockKeyhole size={20} /></span>
             <p className="login-overline">Aktivasi akun sekolah</p>
             <h1>Buat kata sandi</h1>
-            <p className="activation-description">Buat kata sandi minimal 12 karakter dari tautan email. Setelah itu, login untuk mengaktifkan status akun sekolah.</p>
+            <p className="activation-description">Gunakan formulir ini untuk membuat kata sandi pribadi minimal 12 karakter sebelum login. Jika tidak memakai tautan ini, password awal adalah nama sekolah persis seperti terdaftar. Ganti password awal setelah login.</p>
             {error && <div className="login-error" role="alert">{error}</div>}
             <form onSubmit={activate}>
               <label className="form-label" htmlFor="school-password">Kata sandi baru</label>

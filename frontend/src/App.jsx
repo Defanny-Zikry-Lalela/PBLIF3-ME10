@@ -6,7 +6,8 @@ import {
   Route,
   Routes,
 } from 'react-router-dom'
-import { Bell, ChevronDown, ChevronLeft, ChevronRight, Clock3, PackageCheck, RefreshCw, School, Truck, X } from 'lucide-react'
+import { Bell, ChevronDown, ChevronLeft, ChevronRight, Clock3, PackageCheck, Printer, QrCode, RefreshCw, School, Truck, X } from 'lucide-react'
+import QRCode from 'qrcode'
 import Login from './pages/login.jsx'
 import NutritionPage from './pages/NutritionPage.jsx'
 import SchoolManagementPage from './pages/SchoolManagementPage.jsx'
@@ -206,6 +207,7 @@ function App() {
 const STATUS_LABELS = {
   PREPARING: 'Persiapan',
   IN_TRANSIT: 'Dalam perjalanan',
+  ARRIVED: 'Tiba di lokasi',
   COMPLETED: 'Selesai',
   ALERT: 'Perlu perhatian',
 }
@@ -223,6 +225,12 @@ function formatTime(value) {
   return new Intl.DateTimeFormat('id-ID', { hour: '2-digit', minute: '2-digit' }).format(new Date(value))
 }
 
+function formatOptionalDate(value) {
+  if (!value) return 'Tanggal tidak tersedia'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? 'Tanggal tidak tersedia' : formatDate(date)
+}
+
 function Dashboard() {
   const [dashboard, setDashboard] = useState(null)
   const [searchInput, setSearchInput] = useState('')
@@ -237,8 +245,33 @@ function Dashboard() {
   const [assignmentError, setAssignmentError] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [deliveryQrCode, setDeliveryQrCode] = useState('')
+  const [deliveryQrError, setDeliveryQrError] = useState('')
 
   useBodyScrollLock(Boolean(selectedDelivery))
+
+  useEffect(() => {
+    if (!selectedDelivery) {
+      setDeliveryQrCode('')
+      setDeliveryQrError('')
+      return undefined
+    }
+
+    let active = true
+    setDeliveryQrCode('')
+    setDeliveryQrError('')
+    const verificationUrl = new URL('/school/qc', window.location.origin)
+    verificationUrl.searchParams.set('deliveryId', selectedDelivery.id)
+    QRCode.toDataURL(verificationUrl.toString(), { errorCorrectionLevel: 'Q', margin: 2, width: 256 })
+      .then((dataUrl) => {
+        if (active) setDeliveryQrCode(dataUrl)
+      })
+      .catch(() => {
+        if (active) setDeliveryQrError('QR Code gagal disiapkan. Tutup detail lalu coba kembali.')
+      })
+
+    return () => { active = false }
+  }, [selectedDelivery?.id])
 
   useEffect(() => {
     if (!selectedDelivery) return undefined
@@ -384,6 +417,7 @@ function Dashboard() {
                   <option value="all">Semua status</option>
                   <option value="PREPARING">Persiapan</option>
                   <option value="IN_TRANSIT">Dalam perjalanan</option>
+                  <option value="ARRIVED">Tiba di lokasi</option>
                   <option value="COMPLETED">Selesai</option>
                   <option value="ALERT">Perlu perhatian</option>
                 </select>
@@ -421,6 +455,7 @@ function Dashboard() {
                           {STATUS_LABELS[delivery.status] || delivery.status}
                         </div>
                         <span className="status-note">{delivery.statusNote}</span>
+                        {delivery.schoolReceivedAt && <span className="status-note">Diterima sekolah: {new Intl.DateTimeFormat('id-ID', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(delivery.schoolReceivedAt))}</span>}
                         <span className="status-note">QC: {delivery.qcStatus === 'QC_APPROVED' ? 'Disetujui' : delivery.qcStatus === 'QC_REJECTED' ? 'Perlu tindak lanjut' : 'Menunggu'}</span>
                       </td>
                       <td data-label="Aksi">
@@ -479,7 +514,7 @@ function Dashboard() {
 
       {selectedDelivery && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedDelivery(null) }}>
-          <section className="detail-modal" role="dialog" aria-modal="true" aria-labelledby="delivery-detail-title">
+          <section className="detail-modal delivery-detail-modal" role="dialog" aria-modal="true" aria-labelledby="delivery-detail-title">
             <div className="modal-heading">
               <div><p className="eyebrow">Informasi distribusi</p><h2 id="delivery-detail-title">Detail pengiriman</h2></div>
               <button className="icon-button" type="button" aria-label="Tutup detail" onClick={() => setSelectedDelivery(null)}><X size={19} /></button>
@@ -491,8 +526,35 @@ function Dashboard() {
               <div><dt>Jam keberangkatan</dt><dd>{selectedDelivery.departureTime || 'Belum tercatat'}</dd></div>
               <div><dt>Status pengiriman</dt><dd><span className={`delivery-status status-${selectedDelivery.status.toLowerCase()}`}><span className="status-dot" />{STATUS_LABELS[selectedDelivery.status]}</span></dd></div>
               <div><dt>Pembaruan terakhir</dt><dd>{selectedDelivery.statusNote || 'Belum ada pembaruan'}</dd></div>
+              {selectedDelivery.schoolReceivedAt && <div><dt>Dikonfirmasi diterima sekolah</dt><dd>{new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(selectedDelivery.schoolReceivedAt))}</dd></div>}
               {selectedDelivery.receivedAt && <div><dt>Diterima pada</dt><dd>{selectedDelivery.receivedAt}</dd></div>}
             </dl>
+            <section className="delivery-qr-card" aria-label="Label QR Code box pengiriman">
+              <div>
+                <strong><QrCode size={16} /> QR Code box</strong>
+                <p>Cetak dan tempel pada box. Sekolah dapat memindai QR untuk mencocokkan pengiriman.</p>
+                {deliveryQrError && <p className="delivery-qr-error" role="alert">{deliveryQrError}</p>}
+              </div>
+              {deliveryQrCode && <img src={deliveryQrCode} alt={`QR Code pengiriman ${selectedDelivery.school}`} />}
+              <button className="button-secondary" type="button" disabled={!deliveryQrCode} onClick={() => window.print()}>
+                <Printer size={14} /> Cetak QR
+              </button>
+            </section>
+            {deliveryQrCode && (
+              <div id="delivery-qr-print" aria-hidden="true">
+                <div className="delivery-qr-print-header">
+                  <strong>NutriTrack MBG</strong>
+                  <span>LABEL BOX PENGIRIMAN</span>
+                </div>
+                <img src={deliveryQrCode} alt="" />
+                <div className="delivery-qr-print-details">
+                  <strong>{selectedDelivery.school}</strong>
+                  <span>{formatOptionalDate(selectedDelivery.date)}</span>
+                  <span>{selectedDelivery.portions.toLocaleString('id-ID')} porsi</span>
+                  <small>ID {selectedDelivery.id}</small>
+                </div>
+              </div>
+            )}
             <div className="delivery-assignment">
               <label className="form-label" htmlFor="delivery-driver">Tugaskan kurir aktif</label>
               <select id="delivery-driver" className="management-input" value={selectedDriverId} onChange={(event) => setSelectedDriverId(event.target.value)}>
@@ -500,11 +562,13 @@ function Dashboard() {
                 {assignableDrivers.map((driver) => <option key={driver.id} value={driver.id}>{driver.name} · {driver.email}</option>)}
               </select>
               {assignmentError && <p className="school-form-help" role="status">{assignmentError}</p>}
-              <button className="button-primary modal-close-button" type="button" disabled={savingAssignment} onClick={assignDriver}>
+            </div>
+            <div className="delivery-modal-actions">
+              <button className="button-primary" type="button" disabled={savingAssignment} onClick={assignDriver}>
                 {savingAssignment ? 'Menyimpan...' : 'Simpan penugasan'}
               </button>
+              <button className="button-secondary delivery-modal-dismiss" type="button" onClick={() => setSelectedDelivery(null)}>Tutup</button>
             </div>
-            <button className="button-primary modal-close-button" type="button" onClick={() => setSelectedDelivery(null)}>Tutup</button>
           </section>
         </div>
       )}

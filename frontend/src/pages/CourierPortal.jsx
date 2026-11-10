@@ -5,6 +5,7 @@ import { apiRequest } from '../lib/api.js'
 const STATUS_LABELS = {
   PREPARING: 'Menunggu keberangkatan',
   IN_TRANSIT: 'Dalam perjalanan',
+  ARRIVED: 'Tiba di lokasi',
   COMPLETED: 'Selesai diterima',
   ALERT: 'Perlu perhatian admin',
 }
@@ -95,6 +96,9 @@ function CourierPortal({ driver, onLogout }) {
                 <div><dt>Jumlah porsi</dt><dd>{delivery.portions.toLocaleString('id-ID')} porsi</dd></div>
                 <div><dt>Alamat</dt><dd>{delivery.address || 'Alamat belum tersedia'}</dd></div>
                 <div><dt>Berangkat</dt><dd>{delivery.departureTime || 'Belum berangkat'}</dd></div>
+                <div><dt>Dikonfirmasi diterima sekolah</dt><dd>{delivery.schoolReceivedAt
+                  ? new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(delivery.schoolReceivedAt))
+                  : 'Belum dikonfirmasi'}</dd></div>
                 <div><dt>Diterima</dt><dd>{delivery.receivedAt || 'Belum diterima'}</dd></div>
               </dl>
               {delivery.statusNote && <p className="courier-delivery-note">{delivery.statusNote}</p>}

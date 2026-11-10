@@ -44,21 +44,23 @@ model Driver {
 }
 
 model Delivery {
-  id            String   @id @default(cuid())
-  date          DateTime
-  portions      Int
-  departureTime String?
-  status        String   @default("PREPARING")
-  statusNote    String?
-  receivedAt    String?
-  qcStatus      String   @default("PENDING")
-  qcCondition   String?
-  handoverPin   String?  @unique
-  schoolId      String
-  school        School   @relation(fields: [schoolId], references: [id])
-  driverId      String?
-  driver        Driver?  @relation(fields: [driverId], references: [id])
-  claim         Claim?
+  id              String   @id @default(cuid())
+  date            DateTime
+  portions        Int
+  departureTime   String?
+  status          String   @default("PREPARING")
+  statusNote      String?
+  arrivedAt       DateTime?
+  schoolReceivedAt DateTime?
+  receivedAt      String?
+  qcStatus        String   @default("PENDING")
+  qcCondition     String?
+  handoverPin     String?  @unique
+  schoolId        String
+  school          School   @relation(fields: [schoolId], references: [id])
+  driverId        String?
+  driver          Driver?  @relation(fields: [driverId], references: [id])
+  claim           Claim?
 
   @@unique([date, schoolId])
   @@index([date, status])

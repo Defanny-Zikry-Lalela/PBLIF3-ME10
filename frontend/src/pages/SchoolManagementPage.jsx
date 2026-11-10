@@ -160,7 +160,7 @@ function SchoolManagementPage() {
           <p className="breadcrumb">Admin <span>/</span> Sekolah penerima MBG</p>
           <p className="eyebrow"><span className="eyebrow-line" /> Pengelolaan penerima manfaat</p>
           <h1>Sekolah penerima MBG</h1>
-          <p className="page-description">Atur sekolah, target porsi harian, dan akun sekolah untuk memantau penerimaan MBG.</p>
+          <p className="page-description">Atur sekolah, target porsi harian, dan akun sekolah. Password awal mengikuti nama sekolah dan sebaiknya langsung diganti setelah login.</p>
         </div>
         <button className="button-primary page-action-button" type="button" onClick={openNewSchool}>
           <Plus size={16} /> Tambah sekolah
@@ -172,7 +172,7 @@ function SchoolManagementPage() {
         <div>
           <strong>{emailConfigured ? 'Undangan aktivasi sekolah siap dikirim.' : 'Undangan sekolah menunggu konfigurasi SMTP.'}</strong>
           <p>{emailConfigured
-            ? 'Tautan aktivasi aman akan dikirim ke email sekolah agar petugas membuat kata sandinya sendiri.'
+            ? 'Email berisi password awal sesuai nama sekolah dan tautan aman untuk membuat password sendiri.'
             : 'SMTP belum aktif. Isi pengaturan SMTP di backend/.env dan mulai ulang backend. Jangan bagikan kata sandi SMTP melalui chat.'}</p>
         </div>
         <button className="email-test-button" type="button" onClick={testEmailConnection} disabled={testingEmail}>
@@ -261,7 +261,7 @@ function SchoolManagementPage() {
               <div><p className="eyebrow">Penerima program MBG</p><h2 id="new-school-title">{editingSchool ? 'Edit sekolah' : 'Tambah sekolah'}</h2></div>
               <button className="icon-button" type="button" aria-label="Tutup formulir" onClick={() => { setFormOpen(false); setEditingSchool(null) }}><X size={19} /></button>
             </div>
-            <p className="school-modal-description">{editingSchool ? editingSchool.email !== form.email && editingSchool.accountStatus === 'ACTIVE' ? 'Mengubah email akan menonaktifkan akun dan mengirim tautan aktivasi baru ke email tersebut.' : 'Perbarui identitas sekolah dan target porsi MBG.' : 'Tautan aktivasi akan dikirim ke email sekolah. Petugas membuat kata sandi sendiri melalui tautan yang berlaku selama 24 jam.'}</p>
+            <p className="school-modal-description">{editingSchool ? editingSchool.email !== form.email && editingSchool.accountStatus === 'ACTIVE' ? 'Mengubah email akan menonaktifkan akun dan mengatur password awal sesuai nama sekolah terbaru. Tautan email juga dapat digunakan untuk membuat password sendiri.' : 'Perbarui identitas sekolah dan target porsi MBG.' : 'Password awal akun mengikuti nama sekolah persis seperti yang dimasukkan. Petugas dapat login memakai email sekolah lalu mengganti password dari profil. Tautan email juga dapat digunakan untuk membuat password sendiri sebelum login.'}</p>
             <form className="school-form" onSubmit={handleSubmit}>
               <label className="form-label" htmlFor="school-name">Nama sekolah</label>
               <input className="management-input" id="school-name" required maxLength={160} placeholder="Contoh: SDN 01 Batam Center" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />

@@ -6,18 +6,23 @@ import {
   Check,
   CircleHelp,
   Clock3,
+  KeyRound,
+  LockKeyhole,
   LogOut,
   MapPin,
   PackageCheck,
   Route,
   School,
   Truck,
+  X,
 } from 'lucide-react'
 import { apiRequest } from '../lib/api.js'
+import useBodyScrollLock from '../hooks/useBodyScrollLock.js'
 
 const STATUS_LABELS = {
   PREPARING: 'Menunggu keberangkatan',
   IN_TRANSIT: 'Dalam perjalanan',
+  ARRIVED: 'Tiba di lokasi',
   COMPLETED: 'Selesai diterima',
   ALERT: 'Perlu perhatian admin',
 }
@@ -39,8 +44,15 @@ function CourierDashboard({ driver, onLogout }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const [arrivedIds, setArrivedIds] = useState([])
   const [currentDate, setCurrentDate] = useState(() => new Date())
+  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false)
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [passwordConfirmation, setPasswordConfirmation] = useState('')
+  const [passwordError, setPasswordError] = useState('')
+  const [passwordNotice, setPasswordNotice] = useState('')
+  const [savingPassword, setSavingPassword] = useState(false)
+  useBodyScrollLock(passwordDialogOpen)
 
   useEffect(() => {
     const dateTimer = setInterval(() => setCurrentDate(new Date()), 60_000)
@@ -136,18 +148,60 @@ function CourierDashboard({ driver, onLogout }) {
     }
   }
 
-  function confirmArrival(delivery) {
-    setArrivedIds((currentIds) => (
-      currentIds.includes(delivery.id) ? currentIds : [...currentIds, delivery.id]
-    ))
-    setNotice('Konfirmasi tiba dicatat pada tampilan ini. Status pengiriman di server tidak berubah.')
+  async function confirmArrival(delivery) {
+    setSaving(true)
     setError('')
+    setNotice('')
+    try {
+      const result = await apiRequest(`/api/courier/deliveries/${delivery.id}/arrival`, {
+        method: 'POST',
+        tokenType: 'driver',
+      })
+      setDeliveries((currentDeliveries) => currentDeliveries.map((currentDelivery) => (
+        currentDelivery.id === delivery.id
+          ? { ...currentDelivery, status: result.status, arrivedAt: result.arrivedAt }
+          : currentDelivery
+      )))
+      setNotice(result.message)
+    } catch (requestError) {
+      setError(requestError.message || 'Konfirmasi tiba gagal disimpan.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   function submitIssue(event) {
     event.preventDefault()
     if (!selectedDelivery) return
     updateDelivery(selectedDelivery, 'ALERT', issueNote.trim())
+  }
+
+  async function changePassword(event) {
+    event.preventDefault()
+    setPasswordError('')
+    setPasswordNotice('')
+    if (newPassword !== passwordConfirmation) {
+      setPasswordError('Konfirmasi kata sandi baru belum sama.')
+      return
+    }
+
+    setSavingPassword(true)
+    try {
+      const result = await apiRequest('/api/courier/password', {
+        method: 'PATCH',
+        tokenType: 'driver',
+        body: JSON.stringify({ currentPassword, newPassword }),
+      })
+      setPasswordNotice(result.message)
+      setPasswordDialogOpen(false)
+      setCurrentPassword('')
+      setNewPassword('')
+      setPasswordConfirmation('')
+    } catch (requestError) {
+      setPasswordError(requestError.message || 'Kata sandi gagal diubah.')
+    } finally {
+      setSavingPassword(false)
+    }
   }
 
   async function submitHandover(event) {
@@ -184,7 +238,8 @@ function CourierDashboard({ driver, onLogout }) {
           <div className="courier-profile">
             <span className="school-user-avatar">{driver.name.trim().charAt(0).toUpperCase()}</span>
             <span><strong>{driver.name}</strong><small>Kurir MBG</small></span>
-            <button type="button" onClick={onLogout}><LogOut size={14} /><span>Keluar</span></button>
+            <button className="courier-password-button" type="button" aria-label="Ubah password" onClick={() => { setPasswordError(''); setPasswordNotice(''); setPasswordDialogOpen(true) }}><KeyRound size={14} /><span>Ubah password</span></button>
+            <button className="courier-logout-button" type="button" onClick={onLogout}><LogOut size={14} /><span>Keluar</span></button>
           </div>
         </div>
       </header>
@@ -236,6 +291,7 @@ function CourierDashboard({ driver, onLogout }) {
 
         {notice && <div className="inline-notice success-notice" role="status"><Check size={16} />{notice}</div>}
         {error && <div className="inline-notice error-notice" role="alert">{error}</div>}
+        {passwordNotice && <div className="inline-notice success-notice" role="status"><Check size={16} />{passwordNotice}</div>}
 
         {loading ? (
           <div className="panel courier-dashboard-empty">Memuat penugasan...</div>
@@ -314,7 +370,12 @@ function CourierDashboard({ driver, onLogout }) {
                 <p className="courier-destination-address">{selectedDelivery.address || 'Alamat belum tersedia'}</p>
                 <div className="courier-arrival-estimate">
                   <Clock3 size={18} />
-                  <span><small>Estimasi waktu tiba (ETA)</small><strong>Belum tersedia dari server</strong></span>
+                  <span>
+                    <small>{selectedDelivery.arrivedAt ? 'Tiba tercatat di server' : 'Estimasi waktu tiba (ETA)'}</small>
+                    <strong>{selectedDelivery.arrivedAt
+                      ? new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(selectedDelivery.arrivedAt))
+                      : 'Belum tersedia dari server'}</strong>
+                  </span>
                 </div>
                 <div className="courier-action-stack">
                   {selectedDelivery.status === 'PREPARING' && (
@@ -323,9 +384,12 @@ function CourierDashboard({ driver, onLogout }) {
                     </button>
                   )}
                   {selectedDelivery.status === 'IN_TRANSIT' && (
-                    <button className="button-primary" type="button" onClick={() => confirmArrival(selectedDelivery)}>
-                      <Check size={16} /> {arrivedIds.includes(selectedDelivery.id) ? 'Tiba dikonfirmasi' : 'Konfirmasi Tiba di Lokasi'}
+                    <button className="button-primary" type="button" disabled={saving} onClick={() => confirmArrival(selectedDelivery)}>
+                      <Check size={16} /> {saving ? 'Mencatat tiba...' : selectedDelivery.arrivedAt ? 'Sinkronkan status tiba' : 'Konfirmasi Tiba di Lokasi'}
                     </button>
+                  )}
+                  {selectedDelivery.status === 'ARRIVED' && (
+                    <span className="courier-arrival-recorded"><Check size={16} /> Tiba di lokasi tercatat</span>
                   )}
                   {selectedDelivery.status === 'ALERT' && (
                     <button className="button-primary" type="button" disabled={saving} onClick={() => updateDelivery(selectedDelivery, 'IN_TRANSIT')}>
@@ -398,7 +462,7 @@ function CourierDashboard({ driver, onLogout }) {
                   <button
                     className="button-primary"
                     type="submit"
-                    disabled={saving || !/^\d{4}$/.test(pin) || activeDelivery.status !== 'IN_TRANSIT'}
+                    disabled={saving || !/^\d{4}$/.test(pin) || !['IN_TRANSIT', 'ARRIVED'].includes(activeDelivery.status)}
                   >
                     <Check size={16} />{saving ? 'Memverifikasi…' : 'Konfirmasi Serah Terima Selesai'}
                   </button>
@@ -421,6 +485,27 @@ function CourierDashboard({ driver, onLogout }) {
         )}
         <footer className="school-portal-footer">NutriTrack MBG <span>·</span> Program Makanan Bergizi Gratis</footer>
       </main>
+      {passwordDialogOpen && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPasswordDialogOpen(false) }}>
+          <section className="detail-modal school-modal" role="dialog" aria-modal="true" aria-labelledby="courier-password-title">
+            <div className="modal-heading">
+              <div><p className="eyebrow">Keamanan akun kurir</p><h2 id="courier-password-title">Ubah password</h2></div>
+              <button className="icon-button" type="button" aria-label="Tutup ubah password" onClick={() => setPasswordDialogOpen(false)}><X size={19} /></button>
+            </div>
+            <p className="school-modal-description">Gunakan password baru minimal 12 karakter.</p>
+            {passwordError && <div className="inline-notice error-notice" role="alert">{passwordError}</div>}
+            <form className="school-form" onSubmit={changePassword}>
+              <label className="form-label" htmlFor="courier-current-password">Password saat ini</label>
+              <input className="management-input" id="courier-current-password" type="password" autoComplete="current-password" required value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
+              <label className="form-label" htmlFor="courier-new-password">Password baru</label>
+              <input className="management-input" id="courier-new-password" type="password" autoComplete="new-password" minLength={12} maxLength={128} required value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+              <label className="form-label" htmlFor="courier-confirm-password">Ulangi password baru</label>
+              <input className="management-input" id="courier-confirm-password" type="password" autoComplete="new-password" minLength={12} maxLength={128} required value={passwordConfirmation} onChange={(event) => setPasswordConfirmation(event.target.value)} />
+              <button className="button-primary activation-submit" type="submit" disabled={savingPassword}>{savingPassword ? 'Menyimpan...' : <>Simpan password <LockKeyhole size={15} /></>}</button>
+            </form>
+          </section>
+        </div>
+      )}
     </div>
   )
 }

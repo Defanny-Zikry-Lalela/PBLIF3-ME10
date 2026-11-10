@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Bell, Check, ExternalLink, LoaderCircle, RefreshCw, RotateCcw, X } from 'lucide-react'
+import { Bell, Check, CircleAlert, LoaderCircle, RefreshCw, RotateCcw, X } from 'lucide-react'
 import { apiRequest } from '../lib/api.js'
+import EvidenceViewer from '../components/EvidenceViewer.jsx'
 
 const RETURN_STATUS = {
   PENDING: 'Menunggu tinjauan',
@@ -72,12 +73,12 @@ function ReturnsPage() {
       </div>
 
       {notice && <div className="inline-notice success-notice" role="status"><Check size={16} />{notice}</div>}
-      {error && <div className="inline-notice error-notice" role="alert"><Bell size={16} />{error}</div>}
+      {error && <div className="inline-notice error-notice" role="alert"><CircleAlert size={16} />{error}<button type="button" onClick={loadReturns} aria-label="Muat ulang pengajuan retur"><RefreshCw size={14} /></button></div>}
 
       <section className="school-summary-grid" aria-label="Ringkasan retur">
-        <article className="school-summary-card"><span className="school-summary-icon"><RotateCcw size={18} /></span><div><span>Total pengajuan</span><strong>{returns.length}</strong><small>retur dari sekolah</small></div></article>
-        <article className="school-summary-card"><span className="school-summary-icon"><Bell size={18} /></span><div><span>Perlu ditinjau</span><strong>{pendingCount}</strong><small>menunggu keputusan admin</small></div></article>
-        <article className="school-summary-card"><span className="school-summary-icon"><Check size={18} /></span><div><span>Sudah diproses</span><strong>{returns.length - pendingCount}</strong><small>disetujui atau ditolak</small></div></article>
+        <SummaryCard icon={<RotateCcw size={18} />} label="Total pengajuan" value={returns.length} note="retur dari sekolah" />
+        <SummaryCard icon={<Bell size={18} />} label="Perlu ditinjau" value={pendingCount} note="menunggu keputusan admin" />
+        <SummaryCard icon={<Check size={18} />} label="Sudah diproses" value={returns.length - pendingCount} note="disetujui atau ditolak" />
       </section>
 
       <section className="panel school-list-panel returns-list-panel">
@@ -102,7 +103,7 @@ function ReturnsPage() {
                 </span>
                 <p className="return-admin-note">{item.note}</p>
                 {item.adminNote && <small className="return-admin-review-note">Catatan admin: {item.adminNote}</small>}
-                {item.evidenceUrl && <a className="return-evidence-link" href={item.evidenceUrl} target="_blank" rel="noreferrer">Lihat bukti <ExternalLink size={12} /></a>}
+                {item.evidenceUrl && <EvidenceViewer url={item.evidenceUrl} />}
                 {item.status === 'PENDING' && (
                   <div className="return-review-controls">
                     <textarea className="management-input" rows="2" maxLength="1000" placeholder="Catatan untuk sekolah (wajib jika menolak)" value={notes[item.id] || ''} onChange={(event) => setNotes({ ...notes, [item.id]: event.target.value })} />
@@ -123,6 +124,16 @@ function ReturnsPage() {
         </div>
       </section>
     </main>
+  )
+}
+
+function SummaryCard({ icon, label, value, note }) {
+  return (
+    <article className="metric-card school-summary-card">
+      <div className="metric-card-top"><span className="metric-icon">{icon}</span><span className="metric-label">{label}</span></div>
+      <strong className="metric-value">{value}</strong>
+      <span className="metric-suffix">{note}</span>
+    </article>
   )
 }
 

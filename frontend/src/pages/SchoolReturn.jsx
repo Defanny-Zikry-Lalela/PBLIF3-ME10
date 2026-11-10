@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Bell, CalendarDays, ExternalLink, RefreshCw, Send, Upload, X } from 'lucide-react'
+import { Bell, CalendarDays, RefreshCw, Send, Upload, X } from 'lucide-react'
 import { apiRequest } from '../lib/api.js'
 import SchoolNavbar from '../components/SchoolNavbar.jsx'
+import EvidenceViewer from '../components/EvidenceViewer.jsx'
 
 const MAX_PROOF_SIZE = 2 * 1024 * 1024
 const ALLOWED_PROOF_TYPES = ['image/jpeg', 'image/png', 'image/webp']
@@ -204,7 +205,7 @@ function SchoolReturn({ school, onLogout }) {
                     {item.adminNote && <small>Catatan admin: {item.adminNote}</small>}
                   </div>
                   <span className={`return-status return-status-${item.status.toLowerCase()}`}>{item.status === 'PENDING' ? 'Menunggu tinjauan' : item.status === 'APPROVED' ? 'Disetujui' : 'Ditolak'}</span>
-                  {item.evidenceUrl && <a href={item.evidenceUrl} target="_blank" rel="noreferrer">Buka bukti <ExternalLink size={12} /></a>}
+                  {item.evidenceUrl && <EvidenceViewer url={item.evidenceUrl} label="Buka bukti" />}
                 </article>
               )) : <p className="school-return-empty">{loadError ? 'Riwayat belum dapat ditampilkan.' : 'Belum ada pengajuan retur.'}</p>}
             </div>

@@ -1,0 +1,1 @@
+ALTER TABLE "Delivery" ADD COLUMN "arrivedAt" DATETIME;

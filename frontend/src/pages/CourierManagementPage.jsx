@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Check, CircleAlert, LoaderCircle, Mail, Plus, RefreshCw, Send, Truck, UserRoundPlus, Users } from 'lucide-react'
+import { Check, CircleAlert, LoaderCircle, Mail, Plus, RefreshCw, Send, Truck, UserRoundPlus, Users, X } from 'lucide-react'
 import { apiRequest } from '../lib/api.js'
+import useBodyScrollLock from '../hooks/useBodyScrollLock.js'
 
 function CourierManagementPage() {
   const [drivers, setDrivers] = useState([])
@@ -10,7 +11,9 @@ function CourierManagementPage() {
   const [sendingId, setSendingId] = useState(null)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [formOpen, setFormOpen] = useState(false)
   const [form, setForm] = useState({ name: '', email: '' })
+  useBodyScrollLock(formOpen)
 
   const loadDrivers = useCallback(async () => {
     setLoading(true)
@@ -40,12 +43,18 @@ function CourierManagementPage() {
       })
       setNotice(result.message)
       setForm({ name: '', email: '' })
+      setFormOpen(false)
       await loadDrivers()
     } catch (requestError) {
       setError(requestError.message || 'Akun kurir gagal dibuat.')
     } finally {
       setSaving(false)
     }
+  }
+
+  function openNewDriver() {
+    setForm({ name: '', email: '' })
+    setFormOpen(true)
   }
 
   async function resendInvitation(driver) {
@@ -75,7 +84,10 @@ function CourierManagementPage() {
           <h1>Akun kurir</h1>
           <p className="page-description">Buat akses kurir, kirim undangan aktivasi, dan tugaskan kurir pada detail pengiriman.</p>
         </div>
-        <button className="button-secondary" type="button" onClick={loadDrivers} disabled={loading}><RefreshCw size={14} /> Perbarui data</button>
+        <div className="page-heading-actions">
+          <button className="button-primary page-action-button" type="button" onClick={openNewDriver}><Plus size={16} /> Tambah kurir</button>
+          <button className="button-secondary" type="button" onClick={loadDrivers} disabled={loading}><RefreshCw size={14} /> Perbarui data</button>
+        </div>
       </div>
 
       <div className={`email-setup-banner${emailConfigured ? ' email-setup-ready' : ''}`}>
@@ -93,15 +105,6 @@ function CourierManagementPage() {
         <SummaryCard icon={<Truck size={18} />} label="Kurir terdaftar" value={drivers.length} note="akun kurir di sistem" />
         <SummaryCard icon={<Check size={18} />} label="Akun aktif" value={activeAccounts} note="kurir sudah mengaktifkan akun" />
         <SummaryCard icon={<Mail size={18} />} label="Menunggu aktivasi" value={pendingAccounts} note="undangan aktivasi kurir" />
-      </section>
-
-      <section className="panel courier-create-panel">
-        <div className="panel-heading"><div><h2>Buat akun kurir</h2><p>Undangan aktivasi dikirim ke email yang didaftarkan.</p></div></div>
-        <form className="courier-create-form" onSubmit={createDriver}>
-          <div><label className="form-label" htmlFor="courier-name">Nama kurir</label><input className="management-input" id="courier-name" required maxLength="160" placeholder="Nama lengkap kurir" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></div>
-          <div><label className="form-label" htmlFor="courier-email">Email kurir</label><input className="management-input" id="courier-email" type="email" required maxLength="254" placeholder="kurir@example.com" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} /></div>
-          <button className="button-primary" type="submit" disabled={saving}>{saving ? <><LoaderCircle size={15} className="refresh-spinning" /> Menyiapkan...</> : <><Plus size={15} /> Buat akun &amp; kirim undangan</>}</button>
-        </form>
       </section>
 
       <section className="panel school-list-panel">
@@ -133,12 +136,42 @@ function CourierManagementPage() {
           )) : <div className="management-empty"><UserRoundPlus size={22} /> Belum ada akun kurir yang terdaftar.</div>}
         </div>
       </section>
+
+      {formOpen && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setFormOpen(false) }}>
+          <section className="detail-modal school-modal" role="dialog" aria-modal="true" aria-labelledby="new-courier-title">
+            <div className="modal-heading">
+              <div><p className="eyebrow">Pengelolaan distribusi</p><h2 id="new-courier-title">Tambah akun kurir</h2></div>
+              <button className="icon-button" type="button" aria-label="Tutup formulir" onClick={() => setFormOpen(false)}><X size={19} /></button>
+            </div>
+            <p className="school-modal-description">Undangan aktivasi akan dikirim ke email kurir agar kurir dapat membuat kata sandi dan mengaktifkan akunnya.</p>
+            <form className="school-form" onSubmit={createDriver}>
+              <label className="form-label" htmlFor="courier-name">Nama kurir</label>
+              <input className="management-input" id="courier-name" required maxLength="160" placeholder="Nama lengkap kurir" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
+
+              <label className="form-label" htmlFor="courier-email">Email kurir</label>
+              <input className="management-input" id="courier-email" type="email" required maxLength="254" placeholder="kurir@example.com" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} />
+              <p className="school-form-help"><Mail size={13} /> Undangan dikirim ke alamat email ini saat SMTP aktif.</p>
+
+              <button className="button-primary school-submit-button" type="submit" disabled={saving}>
+                {saving ? <><LoaderCircle size={16} className="refresh-spinning" /> Menyiapkan...</> : <><Plus size={16} /> Buat akun &amp; kirim undangan</>}
+              </button>
+            </form>
+          </section>
+        </div>
+      )}
     </main>
   )
 }
 
 function SummaryCard({ icon, label, value, note }) {
-  return <article className="school-summary-card"><span className="school-summary-icon">{icon}</span><div><span>{label}</span><strong>{value}</strong><small>{note}</small></div></article>
+  return (
+    <article className="metric-card school-summary-card">
+      <div className="metric-card-top"><span className="metric-icon">{icon}</span><span className="metric-label">{label}</span></div>
+      <strong className="metric-value">{value}</strong>
+      <span className="metric-suffix">{note}</span>
+    </article>
+  )
 }
 
 export default CourierManagementPage

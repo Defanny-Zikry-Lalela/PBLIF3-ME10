@@ -10,6 +10,7 @@ function SchoolPortal({ school, onLogout }) {
 const DELIVERY_LABELS = {
   PREPARING: 'Persiapan di dapur',
   IN_TRANSIT: 'Dalam perjalanan',
+  ARRIVED: 'Tiba di lokasi',
   COMPLETED: 'Sudah diterima',
   ALERT: 'Perlu konfirmasi admin',
 }
@@ -79,8 +80,8 @@ function SchoolDashboard({ school, onLogout }) {
                   <div className="school-manifest-heading"><span><strong>Pengiriman MBG</strong><small>SPPG <ArrowRight size={12} /> {school.name}</small></span><span className="school-manifest-id">{delivery.id.slice(-10).toUpperCase()}</span></div>
                   <div className="delivery-timeline">
                     <div className={delivery.departureTime ? 'timeline-step timeline-step-done' : 'timeline-step'}><span /><strong>{departure ? `${departure} · Berangkat` : 'Menunggu keberangkatan'}</strong></div>
-                    <div className={delivery.status === 'IN_TRANSIT' || delivery.status === 'COMPLETED' ? 'timeline-step timeline-step-current' : 'timeline-step'}><span /><strong>{delivery.status === 'IN_TRANSIT' ? 'Dalam perjalanan' : delivery.status === 'COMPLETED' ? 'Perjalanan selesai' : 'Menunggu kurir'}</strong></div>
-                    <div className={delivery.status === 'COMPLETED' ? 'timeline-step timeline-step-done' : 'timeline-step'}><span /><strong>{eta ? `${eta} · Estimasi tiba` : delivery.receivedAt ? `Diterima ${delivery.receivedAt}` : 'Estimasi belum tersedia'}</strong></div>
+                    <div className={delivery.status === 'ARRIVED' || delivery.status === 'COMPLETED' ? 'timeline-step timeline-step-done' : delivery.status === 'IN_TRANSIT' ? 'timeline-step timeline-step-current' : 'timeline-step'}><span /><strong>{delivery.status === 'ARRIVED' ? 'Tiba di lokasi' : delivery.status === 'IN_TRANSIT' ? 'Dalam perjalanan' : delivery.status === 'COMPLETED' ? 'Perjalanan selesai' : 'Menunggu kurir'}</strong></div>
+                    <div className={delivery.status === 'COMPLETED' ? 'timeline-step timeline-step-done' : delivery.status === 'ARRIVED' ? 'timeline-step timeline-step-current' : 'timeline-step'}><span /><strong>{delivery.status === 'ARRIVED' ? `Tiba ${delivery.arrivedAt ? new Intl.DateTimeFormat('id-ID', { hour: '2-digit', minute: '2-digit' }).format(new Date(delivery.arrivedAt)) : 'di lokasi'} · Menunggu serah terima` : eta ? `${eta} · Estimasi tiba` : delivery.receivedAt ? `Diterima ${delivery.receivedAt}` : 'Estimasi belum tersedia'}</strong></div>
                   </div>
                   {delivery.status === 'ALERT' && <div className="school-delivery-alert"><Bell size={15} /><p>{delivery.statusNote || 'Silakan hubungi admin SPPG untuk informasi distribusi.'}</p></div>}
                 </div>
@@ -89,7 +90,9 @@ function SchoolDashboard({ school, onLogout }) {
                   <div><dt>Jumlah porsi</dt><dd>{delivery.portions.toLocaleString('id-ID')} porsi</dd></div>
                   <div><dt>Status penerimaan</dt><dd>{deliveryStatus}</dd></div>
                   <div><dt>Menu hari ini</dt><dd>{data.menu?.name || 'Informasi menu belum tersedia'}</dd></div>
-                  <div><dt>Waktu diterima</dt><dd>{delivery.receivedAt || 'Menunggu penerimaan'}</dd></div>
+                  <div><dt>Penerimaan sekolah</dt><dd>{delivery.schoolReceivedAt
+                    ? new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(delivery.schoolReceivedAt))
+                    : delivery.receivedAt || 'Menunggu penerimaan'}</dd></div>
                 </dl>
 
                 {data.menu?.ingredients?.length > 0 && <p className="school-menu-ingredients">Menu hari ini: {data.menu.ingredients.join(', ')}</p>}
